@@ -30,14 +30,20 @@ def get_current_date_info() -> str:
 #  CONFIG
 # ─────────────────────────────────────────────
 # Chemins absolus relatifs au dossier de main.py
-_BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
-HISTORY_FILE = os.path.join(_BASE_DIR, "history.json")
-CONFIG_FILE  = os.path.join(_BASE_DIR, "config.json")
-MEMORY_FILE  = os.path.join(_BASE_DIR, "memory.json")
+_BASE_DIR    = pathlib.Path(os.path.dirname(os.path.abspath(__file__)))
+HISTORY_FILE = _BASE_DIR / "history.json"
+CONFIG_FILE  = _BASE_DIR / "config.json"
+MEMORY_FILE  = _BASE_DIR / "memory.json"
 BASE_URL        = "https://openrouter.ai/api/v1"
 MAX_HISTORY     = 100
 MAX_FILE_MB     = 10
 REQUEST_TIMEOUT = 60
+
+# En-têtes standards pour OpenRouter (requis pour certaines optimisations comme le caching)
+OPENROUTER_HEADERS = {
+    "X-Title": "Chatbot Deluxe",
+    "HTTP-Referer": "http://localhost:8000"
+}
 
 app = FastAPI()
 
@@ -114,6 +120,79 @@ def upsert_conversation(session_id: str, model: str, messages: list):
         "bumped_at": now.isoformat(),
     })
     save_history(history)
+
+# ─────────────────────────────────────────────
+#  BUSINESS LOGIC (Git, MCP, RAG)
+# ─────────────────────────────────────────────
+def run_git(args_git: list) -> dict:
+    try:
+        res = subprocess.run(["git"] + args_git, capture_output=True, text=True, cwd=str(_BASE_DIR), encoding="utf-8", errors="replace")
+        return {"ok": res.returncode == 0, "stdout": res.stdout, "stderr": res.stderr, "code": res.returncode}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+def git_status_logic():
+    if not (_BASE_DIR / ".git").exists():
+        return {"ok": False, "not_repo": True}
+    res = run_git(["status", "--porcelain"])
+    branch = run_git(["rev-parse", "--abbrev-ref", "HEAD"])
+    return {
+        "ok": res["ok"], 
+        "status": res["stdout"], 
+        "branch": branch["stdout"].strip() if branch["ok"] else "???"
+    }
+
+def git_commit_logic(message: str):
+    run_git(["add", "."])
+    return run_git(["commit", "-m", message])
+
+def mcp_ls_logic(path: str = "."):
+    if not MCP_ROOT:
+        return {"error": "Aucun dossier MCP configuré"}
+    try:
+        target = (MCP_ROOT / path).resolve()
+        if not str(target).startswith(str(MCP_ROOT)):
+            return {"error": "Accès refusé hors du dossier MCP"}
+        entries = []
+        for entry in sorted(target.iterdir()):
+            if entry.name.startswith('.'):
+                continue
+            entries.append({
+                "name": entry.name,
+                "type": "dir" if entry.is_dir() else "file",
+                "size": entry.stat().st_size if entry.is_file() else None,
+                "ext":  entry.suffix.lstrip('.') if entry.is_file() else None,
+            })
+        return {"path": str(target.relative_to(MCP_ROOT)), "entries": entries}
+    except Exception as e:
+        return {"error": str(e)}
+
+def mcp_read_logic(path: str):
+    if not MCP_ROOT:
+        return {"error": "Aucun dossier MCP configuré"}
+    try:
+        target = (MCP_ROOT / path).resolve()
+        if not str(target).startswith(str(MCP_ROOT)):
+            return {"error": "Accès refusé"}
+        if not target.is_file():
+            return {"error": "Fichier introuvable"}
+        text = target.read_text(encoding="utf-8", errors="replace")
+        return {"path": path, "content": text, "lines": len(text.splitlines())}
+    except Exception as e:
+        return {"error": str(e)}
+
+def mcp_write_logic(path: str, content: str):
+    if not MCP_ROOT:
+        return {"error": "Aucun dossier MCP configuré"}
+    try:
+        target = (MCP_ROOT / path).resolve()
+        if not str(target).startswith(str(MCP_ROOT)):
+            return {"error": "Accès refusé"}
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+        return {"ok": True, "path": path, "bytes": len(content.encode())}
+    except Exception as e:
+        return {"error": str(e)}
 
 # ─────────────────────────────────────────────
 #  FILE HELPERS
@@ -984,6 +1063,34 @@ AGENT_TOOLS_SCHEMA = [
             }
         }
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "rag_index",
+            "description": "Indexe les fichiers du projet pour permettre une recherche sémantique plus tard. Peut indexer tout le projet ou une liste spécifique.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "all": {"type": "boolean", "description": "Si true, indexe tout le dossier MCP racine."},
+                    "paths": {"type": "array", "items": {"type": "string"}, "description": "Liste optionnelle de chemins spécifiques à indexer."}
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "rag_search",
+            "description": "Effectue une recherche 'intelligente' (RAG) dans les fichiers précédemment indexés.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "La question ou le code à chercher"}
+                },
+                "required": ["query"]
+            }
+        }
+    },
 ]
 
 async def execute_tool(name: str, args: dict) -> str:
@@ -1158,6 +1265,36 @@ async def execute_tool(name: str, args: dict) -> str:
             except Exception as e:
                 return f"Erreur Shell : {e}"
 
+        elif name == "rag_index":
+            is_all = args.get("all", False)
+            paths = args.get("paths", [])
+            if is_all:
+                if not MCP_ROOT: return "Erreur : aucun dossier MCP configuré pour indexer tout le projet."
+                # Lister tous les fichiers
+                paths = []
+                for p in MCP_ROOT.rglob("*"):
+                    if p.is_file():
+                        parts_low = [pt.lower() for pt in p.parts]
+                        if not any(pt.startswith('.') for pt in p.parts) and "node_modules" not in parts_low and "__pycache__" not in parts_low:
+                            paths.append(str(p.relative_to(MCP_ROOT)))
+            
+            if not paths: return "Erreur : aucune liste de fichiers fournie."
+            res = await rag_index_internal(paths)
+            return f"Indexation terminée : {res['files']} fichiers, {res['chunks']} morceaux indexés."
+
+        elif name == "rag_search":
+            query = args.get("query", "")
+            if not query: return "Erreur : requête vide."
+            res = rag_search_internal(query)
+            if not res or not res.get("results"):
+                return "Aucun résultat pertinent trouvé dans l'index RAG. As-tu indexé le projet (rag_index) ?"
+            
+            output = "[Résultats RAG]\n"
+            for r in res["results"]:
+                if r["score"] > 0:
+                    output += f"--- FICHIER: {r['path']} (score: {r['score']:.2f}) ---\n{r['text']}\n"
+            return output
+
         else:
             return f"Outil inconnu : {name}"
     except Exception as e:
@@ -1190,7 +1327,38 @@ async def agent_endpoint(req: Request):
     if MCP_ROOT:
         full_system += f"\n\n[MCP Filesystem actif — racine : {MCP_ROOT}]\nTu peux lire/écrire des fichiers via les outils disponibles."
 
-    agent_messages = [{"role":"system","content":full_system}] + messages
+    # --- LOGIQUE CACHING ---
+    # Pour Claude (Anthropic), on peut injecter cache_control: ephemeral
+    # On l'applique au système et au premier bloc de contexte s'il est gros.
+    is_claude = "claude" in model.lower()
+    
+    if is_claude:
+        # Format "list of blocks" pour le système
+        agent_system_content = [{
+            "type": "text",
+            "text": full_system,
+            "cache_control": {"type": "ephemeral"}
+        }]
+        agent_messages = [{"role": "system", "content": agent_system_content}]
+    else:
+        agent_messages = [{"role": "system", "content": full_system}]
+
+    # Si on a des messages d'historique, on vérifie si on doit injecter du cache dedans aussi
+    # (par exemple le premier message utilisateur s'il contient beaucoup de fichiers)
+    processed_messages = []
+    for i, msg in enumerate(messages):
+        m = msg.copy()
+        # On injecte le cache sur le dernier message de contexte stable (ou le premier message utilisateur)
+        # Note: Anthropic recommande de ne pas mettre trop de points de cache (max 4).
+        if is_claude and i == 0 and isinstance(m.get("content"), list):
+            # Si le premier message est une liste (fichiers + texte), on cache le bloc entier
+            for block in m["content"]:
+                if block.get("type") == "text":
+                    block["cache_control"] = {"type": "ephemeral"}
+                    break
+        processed_messages.append(m)
+
+    agent_messages += processed_messages
     max_iterations = 15
 
     async def agent_stream():
@@ -1226,7 +1394,10 @@ async def agent_endpoint(req: Request):
                         # Non-streaming pour function calling
                         resp = await client.post(
                             f"{BASE_URL}/chat/completions",
-                            headers={"Authorization": f"Bearer {api_key}"},
+                            headers={
+                                "Authorization": f"Bearer {api_key}",
+                                **OPENROUTER_HEADERS
+                            },
                             json=req_body
                         )
                         if resp.status_code == 400:
@@ -1242,8 +1413,8 @@ async def agent_endpoint(req: Request):
                             yield f"data: {json.dumps({'error': err_msg})}\n\n"
                             return
                         elif resp.status_code >= 400:
-                            err = resp.json().get("error",{})
-                            msg = err.get("message",str(err)) if isinstance(err,dict) else str(err)
+                            err_data = resp.json().get("error",{})
+                            msg = err_data.get("message",str(err_data)) if isinstance(err_data,dict) else str(err_data)
                             yield f"data: {json.dumps({'error': msg})}\n\n"
                             return
                         result  = resp.json()
@@ -1306,7 +1477,10 @@ async def agent_endpoint(req: Request):
                         full_text = ""
                         async with client.stream(
                             "POST", f"{BASE_URL}/chat/completions",
-                            headers={"Authorization": f"Bearer {api_key}"},
+                            headers={
+                                "Authorization": f"Bearer {api_key}",
+                                **OPENROUTER_HEADERS
+                            },
                             json={"model":model,"messages":fb_messages,"stream":True,
                                   "temperature":temperature,"max_tokens":max_tokens}
                         ) as r:
@@ -1495,7 +1669,7 @@ async def chat(req: Request):
             last_user_msg = " ".join(b.get("text", "") for b in c if b.get("type") == "text") if isinstance(c, list) else str(c)
         
         if last_user_msg:
-            rag_res = rag_search(last_user_msg, limit=4)
+            rag_res = rag_search_internal(last_user_msg, limit=4)
             if rag_res and rag_res.get("results"):
                 rag_context = "\n\n[Contexte Local (RAG) — fichiers du projet :]\n"
                 for r in rag_res["results"]:
@@ -1503,10 +1677,41 @@ async def chat(req: Request):
                         rag_context += f"### FICHIER: {r['path']}\n{r['text']}\n---\n"
                 full_system += rag_context
 
+    # --- LOGIQUE CACHING ---
+    is_claude = "claude" in model.lower()
+    
     messages_to_send = []
     if full_system:
-        messages_to_send.append({"role": "system", "content": full_system})
-    messages_to_send.extend(sanitize_messages(messages))
+        if is_claude:
+            messages_to_send.append({
+                "role": "system", 
+                "content": [{
+                    "type": "text",
+                    "text": full_system,
+                    "cache_control": {"type": "ephemeral"}
+                }]
+            })
+        else:
+            messages_to_send.append({"role": "system", "content": full_system})
+    
+    # Sanitize et injection cache sur le premier message
+    sanitized = sanitize_messages(messages)
+    if is_claude and sanitized:
+        m0 = sanitized[0]
+        if isinstance(m0.get("content"), list):
+            for block in m0["content"]:
+                if block.get("type") == "text":
+                    block["cache_control"] = {"type": "ephemeral"}
+                    break
+        elif isinstance(m0.get("content"), str):
+            # Convertir en liste de blocs pour supporter cache_control
+            m0["content"] = [{
+                "type": "text",
+                "text": m0["content"],
+                "cache_control": {"type": "ephemeral"}
+            }]
+
+    messages_to_send.extend(sanitized)
 
     async def stream_generator():
         full_res = ""
@@ -1518,7 +1723,10 @@ async def chat(req: Request):
                 async with client.stream(
                     "POST",
                     f"{BASE_URL}/chat/completions",
-                    headers={"Authorization": f"Bearer {api_key}"},
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        **OPENROUTER_HEADERS
+                    },
                     json={"model": model, "messages": messages_to_send,
                           "stream": True, "temperature": temperature, "max_tokens": max_tokens},
                 ) as r:
@@ -1672,43 +1880,15 @@ async def mcp_write(req: Request):
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=400)
 
-# ─────────────────────────────────────────────
-#  GIT INTEGRATION
-# ─────────────────────────────────────────────
-def run_git(args: list) -> dict:
-    try:
-        res = subprocess.run(["git"] + args, capture_output=True, text=True, cwd=_BASE_DIR, encoding="utf-8", errors="replace")
-        return {"ok": res.returncode == 0, "stdout": res.stdout, "stderr": res.stderr, "code": res.returncode}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
-
 @app.get("/api/git/status")
-def git_status():
-    if not os.path.exists(os.path.join(_BASE_DIR, ".git")):
-        return {"ok": False, "not_repo": True}
-    res = run_git(["status", "--porcelain"])
-    branch = run_git(["rev-parse", "--abbrev-ref", "HEAD"])
-    return {
-        "ok": res["ok"], 
-        "status": res["stdout"], 
-        "branch": branch["stdout"].strip() if branch["ok"] else "???"
-    }
-
-@app.post("/api/git/init")
-def git_init():
-    res = run_git(["init"])
-    if res["ok"]:
-        # Premier commit auto ?
-        run_git(["add", "."])
-        run_git(["commit", "-m", "Initial commit via Chatbot Deluxe"])
-    return res
+def api_git_status():
+    return git_status_logic()
 
 @app.post("/api/git/commit")
-async def git_commit(req: Request):
+async def api_git_commit(req: Request):
     data = await req.json()
-    msg = data.get("message", "Update via Chatbot")
-    run_git(["add", "."])
-    return run_git(["commit", "-m", msg])
+    message = data.get("message", "Agent update")
+    return git_commit_logic(message)
 
 @app.get("/api/git/diff")
 def git_diff():
@@ -1740,9 +1920,9 @@ def apply_aider_diffs(content: str) -> list[dict]:
             continue
             
         rel_path = file_match.group(1).strip()
-        abs_path = os.path.join(_BASE_DIR, rel_path)
+        abs_path = (_BASE_DIR / rel_path).resolve()
         
-        if not os.path.exists(abs_path):
+        if not abs_path.exists():
             results.append({"ok": False, "path": rel_path, "error": f"Fichier introuvable: {rel_path}"})
             continue
             
@@ -1784,39 +1964,39 @@ _RAG_INDEX: List[Dict[str, Any]] = [] # list of {"path": str, "chunks": [{"text"
 def tokenize(text: str):
     return Counter(re.findall(r"\w+", text.lower()))
 
-def b25_score(query_tokens, chunk_tokens, avg_len, n_chunks, n_containing):
+def b25_score(query_tokens: List[str], chunk_tokens: Counter, avg_len: float, n_chunks: int, n_containing: int) -> float:
     # Version très simplifiée de BM25
-    score = 0
+    score = 0.0
     k1 = 1.5
     b = 0.75
+    # IDF simplifiée
+    if n_chunks <= n_containing: # Eviter log neg
+        idf = 0.1
+    else:
+        idf = math.log((n_chunks - n_containing + 0.5) / (n_containing + 0.5) + 1.0)
+        
+    c_len = float(sum(chunk_tokens.values()))
     for token in query_tokens:
         if token not in chunk_tokens: continue
-        f = chunk_tokens[token]
-        # IDF
-        idf = math.log((n_chunks - n_containing + 0.5) / (n_containing + 0.5) + 1.0)
-        # Term Frequency saturation
-        c_len = sum(chunk_tokens.values())
-        tf = (f * (k1 + 1)) / (f + k1 * (1 - b + b * (c_len / avg_len)))
-        score += idf * tf
+        tf = float(chunk_tokens[token])
+        num = tf * (k1 + 1.0)
+        den = tf + k1 * (1.0 - b + b * (c_len / float(avg_len)))
+        score += idf * (num / den)
     return score
 
-@app.post("/api/rag/index")
-async def rag_index_files(req: Request):
+async def rag_index_internal(paths: List[str]):
     global _RAG_INDEX
-    data = await req.json()
-    paths = data.get("paths", []) # list of rel paths
-    
     new_index = []
+    base = MCP_ROOT if MCP_ROOT else _BASE_DIR
+    # base est maintenant toujours un Path object
     for rel in paths:
-        abs_p = os.path.join(_BASE_DIR, rel)
-        if not os.path.exists(abs_p) or not os.path.isfile(abs_p): continue
-        
         try:
-            content = ""
-            with open(abs_p, "r", encoding="utf-8", errors="replace") as f:
-                content = f.read()
+            abs_p = (base / rel).resolve()
+            if not str(abs_p).startswith(str(base)): continue
+            if not abs_p.is_file(): continue
             
-            # Chunking simple (par paragraphes ou 1000 chars)
+            content = abs_p.read_text(encoding="utf-8", errors="replace")
+            # Chunking simple (par paragraphes ou 1500 chars)
             chunks_raw = [content[i:i+1500] for i in range(0, len(content), 1000)]
             chunks = []
             for c in chunks_raw:
@@ -1827,8 +2007,14 @@ async def rag_index_files(req: Request):
     _RAG_INDEX = new_index
     return {"ok": True, "files": len(_RAG_INDEX), "chunks": sum(len(f["chunks"]) for f in _RAG_INDEX)}
 
-@app.get("/api/rag/search")
-def rag_search(q: str, limit: int = 5):
+@app.post("/api/rag/index")
+async def rag_index_files_route(req: Request):
+    data = await req.json()
+    paths = data.get("paths", [])
+    res = await rag_index_internal(paths)
+    return res
+
+def rag_search_internal(q: str, limit: int = 5):
     if not _RAG_INDEX: return {"results": []}
     
     all_chunks: List[Dict[str, Any]] = []
@@ -1840,7 +2026,7 @@ def rag_search(q: str, limit: int = 5):
     
     n_chunks = len(all_chunks)
     avg_len = sum(sum(c["tokens"].values()) for c in all_chunks) / n_chunks
-    query_tokens = tokenize(q)
+    query_tokens = list(tokenize(q).keys())
     
     token_counts = Counter()
     for c in all_chunks:
@@ -1853,12 +2039,15 @@ def rag_search(q: str, limit: int = 5):
         for t in query_tokens:
             if t in c["tokens"]:
                 n_containing = token_counts[t]
-                # cast explicite pour eviter les erreurs de types a l indexation
-                score += float(b25_score([t], c["tokens"], avg_len, n_chunks, n_containing))
+                score += b25_score([t], c["tokens"], avg_len, n_chunks, n_containing)
         scored.append({"path": str(c["path"]), "text": str(c["text"]), "score": score})
     
     scored.sort(key=lambda x: x["score"], reverse=True)
     return {"results": scored[:limit]}
+
+@app.get("/api/rag/search")
+def rag_search_route(q: str, limit: int = 5):
+    return rag_search_internal(q, limit)
 
 @app.get("/api/debug/models")
 async def debug_models(q: str = ""):

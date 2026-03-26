@@ -202,23 +202,6 @@
     "pinned": false
   },
   {
-    "id": "2026-03-24T09:42:42.274Z_b0qx1",
-    "title": "Test internet",
-    "model": "stepfun/step-3.5-flash:free",
-    "messages": [
-      {
-        "role": "user",
-        "content": "qui est le nouveau maire de paris?"
-      },
-      {
-        "role": "assistant",
-        "content": "Le maire de Paris est toujours **Anne Hidalgo**, réélue pour un second mandat en 2020. En 2026, il n’y a pas eu de changement à ce poste, les prochaines élections municipales sont prévues en 2026 (les dates exactes n’étant pas encore fixées à ce stade)."
-      }
-    ],
-    "date": "24/03/2026 10:43",
-    "bumped_at": "2026-03-24T10:43:10.323023"
-  },
-  {
     "id": "2026-03-25T10:06:16.366Z_t7h6p",
     "title": "Test agent + mcp OK",
     "model": "google/gemini-2.0-flash-lite-001",

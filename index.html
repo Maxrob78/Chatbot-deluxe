@@ -3522,10 +3522,7 @@
             <span class="icon">📚</span>
             <span>RAG</span>
           </button>
-          <button class="tbtn" id="btn-git-toggle" onclick="openGitOverlay()" title="Git Management">
-            <span class="icon">🌿</span>
-            <span>Git</span>
-          </button>
+          <!-- Git button removed as per user request (useless for user, only for IA) -->
           <div class="tbtn-sep"></div>
           <button class="tbtn" id="btn-guide" title="Guide des modèles">◧ Guide</button>
           <button class="tbtn" id="btn-memory" title="Mémoire persistante">◈ Mémoire <span class="btn-memory-count"
@@ -5556,29 +5553,90 @@
         }
       },
       read_context_file: {
-        desc: 'Lire un fichier du contexte',
+        desc: 'Lire un fichier attaché à la discussion',
         icon: '📄',
         async run(filename) {
           const f = ctxFiles.find(x => x.name.includes(filename));
-          if (!f) return 'Fichier non trouvé : ' + filename;
+          if (!f) return 'Fichier non trouvé dans le contexte : ' + filename;
           return f.text || '[Image non lisible]';
         }
       },
       run_python: {
-        desc: 'Exécuter du Python',
+        desc: 'Exécuter du code Python (Sandbox)',
         icon: '🐍',
         async run(code) {
           if (!pyodideReady) await loadPyodide_();
           if (!pyodideReady) return 'Python non disponible';
           const logs = [];
-          const orig = pyodideInstance.runPython;
           try {
-            pyodideInstance.globals.set('_agent_out', []);
-            const wrapped = 'import sys\nclass _Cap:\n  def write(self,t):__import__("js").globalThis._agentLog(t)\n  def flush(self):pass\nsys.stdout=_Cap()\n' + code;
             window._agentLog = t => logs.push(t);
-            pyodideInstance.runPython(wrapped);
-            return logs.join('') || '(pas de sortie)';
+            pyodideInstance.runPython('import sys\nclass _Cap:\n  def write(self,t):__import__("js").globalThis._agentLog(t)\n  def flush(self):pass\nsys.stdout=_Cap()\n' + code);
+            return logs.join('') || '(exécution terminée)';
           } catch (e) { return 'Erreur : ' + e.message; }
+        }
+      },
+      read_file: {
+        desc: 'Lire un fichier réel sur le disque',
+        icon: '📖',
+        async run(path) {
+          const r = await fetch('/api/mcp/read?path=' + encodeURIComponent(path));
+          const d = await r.json();
+          return d.content || d.error || 'Erreur inconnue';
+        }
+      },
+      write_file: {
+        desc: 'Écrire dans un fichier local',
+        icon: '💾',
+        async run(path, content) {
+          const r = await fetch('/api/mcp/write', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path, content })
+          });
+          const d = await r.json();
+          return d.ok ? 'Fichier écrit avec succès' : d.error;
+        }
+      },
+      list_files: {
+        desc: 'Lister les fichiers d\'un dossier',
+        icon: '📁',
+        async run(path = '.') {
+          const r = await fetch('/api/mcp/ls?path=' + encodeURIComponent(path));
+          const d = await r.json();
+          if (d.error) return d.error;
+          return d.entries.map(e => `${e.type === 'dir' ? '[DIR]' : '[FILE]'} ${e.name}`).join('\n');
+        }
+      },
+      git_status: {
+        desc: 'Voir le statut Git',
+        icon: '🌿',
+        async run() {
+          const r = await fetch('/api/git/status');
+          const d = await r.json();
+          return d.status || 'Pas de changements ou pas un dépôt Git';
+        }
+      },
+      git_commit: {
+        desc: 'Faire un commit Git',
+        icon: '✅',
+        async run(message) {
+          const r = await fetch('/api/git/commit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message })
+          });
+          const d = await r.json();
+          return d.ok ? 'Commit réussi' : d.stderr || d.error;
+        }
+      },
+      rag_search: {
+        desc: 'Chercher dans le code indexé (RAG)',
+        icon: '🔎',
+        async run(query) {
+          const r = await fetch('/api/rag/search?q=' + encodeURIComponent(query));
+          const d = await r.json();
+          if (!d.results || d.results.length === 0) return "Aucun résultat trouvé dans le code.";
+          return d.results.map(res => `### ${res.path} (score: ${res.score.toFixed(2)})\n${res.text}`).join('\n---\n');
         }
       }
     };
