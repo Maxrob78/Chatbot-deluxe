@@ -33,7 +33,9 @@ def get_current_date_info() -> str:
 _BASE_DIR    = pathlib.Path(os.path.dirname(os.path.abspath(__file__)))
 HISTORY_FILE = _BASE_DIR / "history.json"
 CONFIG_FILE  = _BASE_DIR / "config.json"
+MEMCONFIG_FILE  = _BASE_DIR / "memconfig.json"
 MEMORY_FILE  = _BASE_DIR / "memory.json"
+STATS_FILE   = _BASE_DIR / "usage_stats.json"
 BASE_URL        = "https://openrouter.ai/api/v1"
 MAX_HISTORY     = 100
 MAX_FILE_MB     = 10
@@ -124,6 +126,47 @@ def upsert_conversation(session_id: str, model: str, messages: list):
         "bumped_at": now.isoformat(),
     })
     save_history(history)
+
+# ─────────────────────────────────────────────
+#  STATS HELPERS
+# ─────────────────────────────────────────────
+def load_stats() -> dict:
+    if not os.path.exists(STATS_FILE):
+        return {
+            "tokens_sent": 0,
+            "tokens_received": 0,
+            "tokens_saved_trimmer": 0,
+            "tokens_cached": 0,
+            "requests_count": 0,
+            "estimated_eur_saved": 0.0
+        }
+    with open(STATS_FILE, "r", encoding="utf-8") as f:
+        try: return json.load(f)
+        except: return load_stats()
+
+def save_stats(stats: dict):
+    with open(STATS_FILE, "w", encoding="utf-8") as f:
+        json.dump(stats, f, indent=2)
+
+def update_usage_stats(sent: int, received: int, saved_trim: int = 0, cached: int = 0):
+    s = load_stats()
+    s["tokens_sent"] += sent
+    s["tokens_received"] += received
+    s["tokens_saved_trimmer"] += saved_trim
+    s["tokens_cached"] += cached
+    s["requests_count"] += 1
+    # Estimation : ~3$ par 1M tokens -> env 2.75€ par 1M tokens
+    s["estimated_eur_saved"] = (s["tokens_saved_trimmer"] + s["tokens_cached"]) / 1_000_000 * 2.75
+    save_stats(s)
+
+@app.get("/api/stats")
+async def get_stats_route():
+    return load_stats()
+
+@app.post("/api/stats/reset")
+async def reset_stats():
+    if os.path.exists(STATS_FILE): os.remove(STATS_FILE)
+    return load_stats()
 
 # ─────────────────────────────────────────────
 #  BUSINESS LOGIC (Git, MCP, RAG)
@@ -374,9 +417,10 @@ async def get_models():
                     # OpenRouter peut renvoyer -1 pour des prix inconnus/vagues
                     if completion_val < 0: return "—"
                     
-                    cost = completion_val * 1_000_000
-                    if cost == 0: return "Gratuit"
-                    return f"${cost:.2f}/M" if cost < 1 else f"${cost:.1f}/M"
+                    cost_usd = completion_val * 1_000_000
+                    cost_eur = cost_usd * 0.92
+                    if cost_eur == 0: return "Gratuit"
+                    return f"{cost_eur:.2f}€/M" if cost_eur < 1 else f"{cost_eur:.1f}€/M"
                 except: return "—"
 
             details = {
@@ -737,7 +781,7 @@ async def fetch_page_content(url: str, max_chars: int = 2500) -> str:
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
             "Accept-Language": "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7",
         }
-        async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=10, follow_redirects=True, verify=False) as client:
             r = await client.get(url, headers=headers)
             if r.status_code != 200: 
                 return ""
@@ -829,7 +873,7 @@ RE_ALWAYS_SEARCH = re.compile(
     r"prix|coût|tarif|cours|bourse|action|crypto|bitcoin|euro|dollar|taux|combien coûte|quel est le prix|"
     r"weather|température|prévision|forecast|pluie|neige|vent|"
     r"score|match|résultat|classement|ligue|championnat|liga|tournoi|gagnant|qui a gagné|quel score|quelle équipe|"
-    r"PDG|CEO|président|premier ministre|ministre|directeur|qui dirige|qui est le patron|"
+    r"PDG|CEO|président|premier ministre|ministre|directeur|qui dirige|qui est le patron|predit|prédiction|prévois|prévoir|prediction|predictions|selection|sélection|compo|composition|"
     r"élu|élection|vote|referendum|sondage|poll|"
     r"sorti|sortie|disponible|date de sortie|quand sort|nouvelle version|mise à jour)\b",
     re.I
@@ -1581,7 +1625,6 @@ async def agent_endpoint(req: Request):
     temperature   = body.get("temperature", 0.7)
     max_tokens    = body.get("max_tokens", 4096)
     session_id    = body.get("session_id","")
-    session_id    = body.get("session_id","")
     system_prompt = cfg.get("system_prompt","Tu es un assistant utile, précis et concis.")
     
     # Règle automatique TDD
@@ -1600,36 +1643,10 @@ async def agent_endpoint(req: Request):
     if MCP_ROOT:
         full_system += f"\n\n[MCP Filesystem actif — racine : {MCP_ROOT}]\nTu peux lire/écrire des fichiers via les outils disponibles."
 
-    # --- LOGIQUE CACHING ---
-    # Pour Claude (Anthropic), on peut injecter cache_control: ephemeral
-    # On l'applique au système et au premier bloc de contexte s'il est gros.
-    is_claude = "claude" in model.lower()
-    
-    if is_claude:
-        # Format "list of blocks" pour le système
-        agent_system_content = [{
-            "type": "text",
-            "text": full_system,
-            "cache_control": {"type": "ephemeral"}
-        }]
-        agent_messages = [{"role": "system", "content": agent_system_content}]
-    else:
-        agent_messages = [{"role": "system", "content": full_system}]
+    # --- LOGIQUE MESSAGES ---
+    agent_messages = [{"role": "system", "content": full_system}]
 
-    # Si on a des messages d'historique, on vérifie si on doit injecter du cache dedans aussi
-    # (par exemple le premier message utilisateur s'il contient beaucoup de fichiers)
-    processed_messages = []
-    for i, msg in enumerate(messages):
-        m = msg.copy()
-        # On injecte le cache sur le dernier message de contexte stable (ou le premier message utilisateur)
-        # Note: Anthropic recommande de ne pas mettre trop de points de cache (max 4).
-        if is_claude and i == 0 and isinstance(m.get("content"), list):
-            # Si le premier message est une liste (fichiers + texte), on cache le bloc entier
-            for block in m["content"]:
-                if block.get("type") == "text":
-                    block["cache_control"] = {"type": "ephemeral"}
-                    break
-        processed_messages.append(m)
+    processed_messages = messages
 
     processed_messages = trim_history(processed_messages)
     agent_messages += processed_messages
@@ -1674,22 +1691,18 @@ async def agent_endpoint(req: Request):
                             },
                             json=req_body
                         )
-                        if resp.status_code == 400:
-                            err_body = resp.json()
-                            err_msg  = str(err_body.get("error",""))
-                            # Si erreur liée aux tools → basculer en fallback
-                            if any(k in err_msg.lower() for k in ["tool","function","unsupported","not support"]):
-                                print(f"[AGENT] Modèle sans function calling, fallback texte")
+                        if resp.status_code >= 400:
+                            err_body = resp.json() if resp.status_code != 500 else {"error": "Server Error"}
+                            err_msg  = str(err_body.get("error","")) or str(err_body)
+                            
+                            # Si erreur liée aux tools ou erreur inconnue du provider -> fallback texte
+                            if iteration == 1 or any(k in err_msg.lower() for k in ["tool","function","unsupported","not support","provider","format","context"]):
+                                print(f"[AGENT] Erreur API ({resp.status_code}), tentative fallback texte...")
                                 use_tools = False
-                                yield f"data: {json.dumps({'info': 'Modèle sans function calling, mode texte'})}\n\n"
                                 iteration -= 1
                                 continue
+                                
                             yield f"data: {json.dumps({'error': err_msg})}\n\n"
-                            return
-                        elif resp.status_code >= 400:
-                            err_data = resp.json().get("error",{})
-                            msg = err_data.get("message",str(err_data)) if isinstance(err_data,dict) else str(err_data)
-                            yield f"data: {json.dumps({'error': msg})}\n\n"
                             return
                         result  = resp.json()
                         choice  = result["choices"][0]
@@ -1713,7 +1726,7 @@ async def agent_endpoint(req: Request):
                                 agent_messages.append({
                                     "role": "tool",
                                     "tool_call_id": tc["id"],
-                                    "content": tool_result[:8000]
+                                    "content": str(tool_result)[:5000]
                                 })
                             continue  # Prochain tour de boucle
 
@@ -1738,17 +1751,17 @@ async def agent_endpoint(req: Request):
                         # Injecter les instructions d'outils dans le dernier message système
                         fallback_system = agent_messages[0]["content"] if agent_messages else ""
                         fallback_system += (
-                            "\n\nTu es en mode agent. Pour utiliser un outil, ecris EXACTEMENT:\n"
-                            "TOOL:web_search:<requete>\n"
-                            "TOOL:read_file:<chemin>\n"
-                            "TOOL:write_file:<chemin>\n<contenu>\n"
-                            "TOOL:list_files:<dossier>\n"
-                            "Sinon reponds normalement."
+                            "\n\nTu es en mode agent. Pour utiliser un outil, écris EXCLUSIVEMENT la commande au format suivant :\n"
+                            "Format: TOOL:<nom>:<argument>\n"
+                            "Note: Si tu utilises un autre format comme <function=...> ou d'autres balises, le système essaiera de l'interpréter mais le format TOOL: est préférable.\n"
+                            "IMPORTANT: N'affiche JAMAIS ces balises à l'utilisateur.\n"
                         )
                         fb_messages = [{"role":"system","content":fallback_system}] + agent_messages[1:]
 
                         # Streaming natif
                         full_text = ""
+                        last_yielded_idx = 0
+                        yielding_stopped = False
                         async with client.stream(
                             "POST", f"{BASE_URL}/chat/completions",
                             headers={
@@ -1766,36 +1779,80 @@ async def agent_endpoint(req: Request):
                                     delta = json.loads(payload)["choices"][0].get("delta",{}).get("content","")
                                     if isinstance(delta, str) and delta:
                                         full_text += delta
-                                        yield f"data: {json.dumps({'delta': delta})}\n\n"
+                                        
+                                        # Buffer de sécurité pour éviter de yield les commandes techniques
+                                        if "TOOL:" in full_text or "<function=" in full_text or "<parameter=" in full_text:
+                                            # On yield tout ce qui précède le premier outil s'il y en a un
+                                            tool_start = full_text.find("TOOL:")
+                                            if tool_start == -1: tool_start = full_text.find("<function=")
+                                            if tool_start == -1: tool_start = full_text.find("<parameter=")
+                                            
+                                            if last_yielded_idx < tool_start:
+                                                to_yield = full_text[last_yielded_idx:tool_start]
+                                                yield f"data: {json.dumps({'delta': to_yield})}\n\n"
+                                                last_yielded_idx = tool_start
+                                            yielding_stopped = True
+                                        
+                                        if not yielding_stopped:
+                                            # On garde 30 caractères en réserve pour masquer les tags longs
+                                            if len(full_text) - last_yielded_idx > 30:
+                                                to_send = full_text[last_yielded_idx:-30]
+                                                yield f"data: {json.dumps({'delta': to_send})}\n\n"
+                                                last_yielded_idx += len(to_send)
                                 except: pass
 
                         # Détecter appel d'outil dans la réponse texte
                         import re as _re3
-                        # Détecter appel d'outil dans la réponse texte
-                        import re as _re3
-                        tool_match = _re3.search(r"TOOL:(\w+):(.+?)(?:\n|$)", full_text, _re3.S)
-                        if tool_match and iteration < max_iterations:
-                            fn_name = tool_match.group(1)
-                            fn_arg  = tool_match.group(2).strip()
-                            fn_args = {"query": fn_arg} if fn_name == "web_search" else \
-                                      {"path": fn_arg.split("\n")[0], "content": "\n".join(fn_arg.split("\n")[1:])} if fn_name == "write_file" else \
-                                      {"path": fn_arg}
-                            yield f"data: {json.dumps({'tool_call': True, 'tool': fn_name, 'args': fn_args})}\n\n"
-                            tool_result = await execute_tool(fn_name, fn_args)
-                            yield f"data: {json.dumps({'tool_result': True, 'tool': fn_name, 'preview': tool_result[:100]})}\n\n"
-                            agent_messages.append({"role":"assistant","content":full_text})
-                            agent_messages.append({"role":"user","content":"[Resultat "+fn_name+"] :\n"+tool_result[:6000]})
-                            continue
+                        # Extraction multi-formats (TOOL: ou XML)
+                        tool_matches = []
+                        # 1. Format standard TOOL:name:args
+                        std_m = _re3.findall(r"TOOL:(\w+):(.+?)(?=\n|TOOL:|<function=|$)", full_text, _re3.S)
+                        if std_m: tool_matches.extend(std_m)
+                        
+                        # 2. Format XML <function=name>...<parameter=...>(arg)
+                        # Plus robuste pour capturer même si incomplet
+                        xml_m = _re3.findall(r"<function=(\w+)>(?:.*?<parameter.*?>)?\s*(.+?)(?=\n|</function>|</parameter>|TOOL:|<function=|$)", full_text, _re3.S)
+                        if xml_m: tool_matches.extend(xml_m)
+                        
+                        if tool_matches and iteration < max_iterations:
+                            # Utiliser un dictionnaire pour éviter les doublons accidentels de détection
+                            seen_tools = []
+                            for fn_name, fn_arg in tool_matches:
+                                # Nettoyage approfondi des résidus XML
+                                fn_arg = _re3.sub(r"</?(?:parameter|function|arg).*?>", "", fn_arg)
+                                fn_arg = fn_arg.strip()
+                                if not fn_arg: continue
+                                seen_tools.append((fn_name, fn_arg))
 
+                            for fn_name, fn_arg in seen_tools:
+                                fn_args = {"query": fn_arg} if fn_name == "web_search" else \
+                                          {"path": fn_arg.split("\n")[0], "content": "\n".join(fn_arg.split("\n")[1:])} if fn_name == "write_file" else \
+                                          {"path": fn_arg}
+                                
+                                yield f"data: {json.dumps({'tool_call': True, 'tool': fn_name, 'args': fn_args})}\n\n"
+                                tool_result = await execute_tool(fn_name, fn_args)
+                                yield f"data: {json.dumps({'tool_result': True, 'tool': fn_name, 'preview': tool_result[:100]})}\n\n"
+                                
+                                # On enrichit la mémoire pour la suite
+                                agent_messages.append({"role":"assistant","content":f"TOOL:{fn_name}:{fn_arg}"})
+                                agent_messages.append({"role":"user","content":f"[Résultat {fn_name}] :\n{tool_result[:5000]}"})
+                            
+                            continue # On repart pour un tour d'analyse
+
+                        # Si aucune commande tool n'a été trouvée, on vide le reste du buffer vers l'utilisateur
+                        if not tool_matches:
+                            remainder = full_text[last_yielded_idx:]
+                            if remainder:
+                                yield f"data: {json.dumps({'delta': f'{remainder}'})}\n\n"
+                        
                         # Réponse finale en fallback
-                        messages.append({"role":"assistant","content":full_text})
+                        new_assistant_content = full_text
+                        messages.append({"role":"assistant","content":new_assistant_content})
                         upsert_conversation(session_id, model, messages)
                         yield f"data: {json.dumps({'done': True, 'tokens': estimate_tokens(messages)})}\n\n"
                         return
-
             except Exception as e:
                 yield f"data: {json.dumps({'error': str(e)})}\n\n"
-                return
 
         yield f"data: {json.dumps({'error': 'Limite de '+str(max_iterations)+' iterations atteinte'})}\n\n"
     return StreamingResponse(agent_stream(), media_type="text/event-stream")
@@ -1812,7 +1869,9 @@ async def get_balance():
             r = await client.get(f"{BASE_URL}/auth/key", headers={"Authorization": f"Bearer {api_key}"})
             r.raise_for_status()
             data = r.json().get("data", {})
-            return {"usage": f"{data.get('usage', 0):.4f} $"}
+            usage_usd = data.get('usage', 0)
+            usage_eur = usage_usd * 0.92
+            return {"usage": f"{usage_eur:.4f} €"}
     except Exception as e:
         return {"error": str(e)}
 
@@ -1877,6 +1936,9 @@ async def chat(req: Request):
 
     api_key        = cfg.get("api_key", "")
     session_id     = body.get("session_id")
+    if not session_id:
+        import uuid
+        session_id = str(uuid.uuid4())[:8]
     model          = body.get("model")
     messages       = body.get("messages", [])
     temperature    = body.get("temperature", 0.7)
@@ -1884,14 +1946,19 @@ async def chat(req: Request):
     system_prompt  = cfg.get("system_prompt", "Tu es un assistant utile, précis et concis.")
     web_search_on  = body.get("web_search", True)
 
+    # 1. Trimming (Context Trimmer)
+    original_tokens = estimate_tokens(messages)
+    messages = trim_history(messages, max_length=20, keep_start=3, keep_end=10)
+    after_trim_tokens = estimate_tokens(messages)
+    saved_by_trim = max(0, original_tokens - after_trim_tokens)
+
     def sanitize_messages(msgs):
         """Nettoie les messages avant envoi à OpenRouter."""
         clean = []
         for m in msgs:
             role = m.get("role")
             c    = m.get("content")
-            if not c:
-                continue
+            if not c: continue
             if isinstance(c, list):
                 blocks = []
                 has_image = False
@@ -1901,11 +1968,8 @@ async def chat(req: Request):
                     elif b.get("type") == "image_url":
                         url = b.get("image_url", {}).get("url", "")
                         if url.startswith("data:image/") or url.startswith("http"):
-                            blocks.append(b)
-                            has_image = True
-                if not blocks:
-                    continue
-                # Si pas d'image : envoyer comme string simple (compatible tous modèles)
+                            blocks.append(b); has_image = True
+                if not blocks: continue
                 if not has_image:
                     text = " ".join(b["text"] for b in blocks if b.get("type") == "text")
                     clean.append({"role": role, "content": text})
@@ -1921,54 +1985,46 @@ async def chat(req: Request):
     full_system  = f"{date_info}\n\n{system_prompt.strip()}"
     if memory_items:
         mem_text = "\n".join(f"- {m['text']}" for m in memory_items if m.get("text","").strip())
-        if mem_text:
-            full_system += f"\n\n[Mémoire persistante — informations sur l\'utilisateur :]\n{mem_text}"
+        if mem_text: full_system += f"\n\n[Mémoire persistante — informations sur l'utilisateur :]\n{mem_text}"
 
-    # Recherche web automatique si la question le nécessite
+    # Recherche web automatique
     search_query = should_search(messages) if web_search_on else None
     search_results_text = ""
     if search_query:
-        results = await ddg_search(search_query, max_results=10)
+        results = await ddg_search(search_query, max_results=5)
         if results:
             search_results_text = build_search_context(results, search_query)
             full_system += f"\n\n{search_results_text}"
-            print(f"[SEARCH] {len(results)} résultats pour: {search_query[:60]}")
 
-    # RAG local automatique si indexé
+    # RAG local
     if _RAG_INDEX and messages:
-        last_user_msg = ""
         last = messages[-1]
+        last_txt = ""
         if last.get("role") == "user":
             c = last.get("content", "")
-            last_user_msg = " ".join(b.get("text", "") for b in c if b.get("type") == "text") if isinstance(c, list) else str(c)
-        
-        if last_user_msg:
-            rag_res = rag_search_internal(last_user_msg, limit=4)
+            last_txt = " ".join(b.get("text", "") for b in c if b.get("type") == "text") if isinstance(c, list) else str(c)
+        if last_txt:
+            rag_res = rag_search_internal(last_txt, limit=4)
             if rag_res and rag_res.get("results"):
-                rag_context = "\n\n[Contexte Local (RAG) — fichiers du projet :]\n"
+                rag_context = "\n\n[Contexte Local (RAG) :]\n"
                 for r in rag_res["results"]:
                     if r["score"] > 0:
                         rag_context += f"### FICHIER: {r['path']}\n{r['text']}\n---\n"
                 full_system += rag_context
 
-    # --- LOGIQUE CACHING ---
-    is_claude = "claude" in model.lower()
-    
+    # --- LOGIQUE CACHING & PREPARATION ---
+    is_claude = "anthropic/claude" in model.lower()
     messages_to_send = []
+    
     if full_system:
         if is_claude:
             messages_to_send.append({
                 "role": "system", 
-                "content": [{
-                    "type": "text",
-                    "text": full_system,
-                    "cache_control": {"type": "ephemeral"}
-                }]
+                "content": [{"type": "text", "text": full_system, "cache_control": {"type": "ephemeral"}}]
             })
         else:
             messages_to_send.append({"role": "system", "content": full_system})
     
-    # Sanitize et injection cache sur le premier message
     sanitized = sanitize_messages(messages)
     if is_claude and sanitized:
         m0 = sanitized[0]
@@ -1977,47 +2033,33 @@ async def chat(req: Request):
                 if block.get("type") == "text":
                     block["cache_control"] = {"type": "ephemeral"}
                     break
-        elif isinstance(m0.get("content"), str):
-            # Convertir en liste de blocs pour supporter cache_control
-            m0["content"] = [{
-                "type": "text",
-                "text": m0["content"],
-                "cache_control": {"type": "ephemeral"}
-            }]
-
+        else:
+            m0["content"] = [{"type": "text", "text": m0["content"], "cache_control": {"type": "ephemeral"}}]
+            
     messages_to_send.extend(sanitized)
 
     async def stream_generator():
-        full_res = ""
-        # Signaler au frontend si une recherche a été faite
+        raw_full = ""
+        received_tokens = 0
+        sent_tokens = after_trim_tokens
+        
         if search_results_text:
-            yield f"data: {json.dumps({'searching': True, 'query': search_query[:80]})}\n\n"
+            yield f"data: {json.dumps({'searching': True, 'query': search_query[:60]})}\n\n"
+            
         try:
             async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
                 async with client.stream(
                     "POST",
                     f"{BASE_URL}/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {api_key}",
-                        **OPENROUTER_HEADERS
-                    },
-                    json={"model": model, "messages": messages_to_send,
-                          "stream": True, "temperature": temperature, "max_tokens": max_tokens},
+                    headers={"Authorization": f"Bearer {api_key}", **OPENROUTER_HEADERS},
+                    json={"model": model, "messages": messages_to_send, "stream": True, "temperature": temperature, "max_tokens": max_tokens},
                 ) as r:
-                    # Lire le body d'erreur avant raise pour avoir le vrai message
                     if r.status_code >= 400:
                         err_body = await r.aread()
-                        try:
-                            err_json = json.loads(err_body)
-                            err_msg  = err_json.get("error", {})
-                            if isinstance(err_msg, dict):
-                                err_msg = err_msg.get("message", str(err_json))
-                            else:
-                                err_msg = str(err_msg)
-                        except:
-                            err_msg = err_body.decode(errors="replace")[:300]
-                        yield f"data: {json.dumps({'error': f'Erreur {r.status_code} : {err_msg}'})}\n\n"
+                        err_msg = err_body.decode(errors="replace")[:200]
+                        yield f"data: {json.dumps({'error': f'Erreur {r.status_code}: {err_msg}'})}\n\n"
                         return
+
                     async for line in r.aiter_lines():
                         if not line or not line.startswith("data: "): continue
                         payload = line[6:]
@@ -2025,21 +2067,25 @@ async def chat(req: Request):
                         try:
                             chunk = json.loads(payload)
                             delta = chunk["choices"][0].get("delta", {}).get("content", "")
-                            if isinstance(delta, str) and delta:
-                                # Cast explicite pour le linter
-                                full_res = str(full_res) + delta
+                            if delta:
+                                raw_full += delta
+                                received_tokens += 1
                                 yield f"data: {json.dumps({'delta': delta})}\n\n"
+                            
+                            usage = chunk.get("usage")
+                            if usage:
+                                p_tok = usage.get("prompt_tokens", sent_tokens)
+                                c_tok = usage.get("completion_tokens", received_tokens)
+                                cached = usage.get("cache_creation_input_tokens", 0) + usage.get("cache_read_input_tokens", 0)
+                                update_usage_stats(p_tok, c_tok, saved_by_trim, cached)
+                                yield f"data: {json.dumps({'done': True, 'tokens': p_tok + c_tok})}\n\n"
                         except: pass
+            
+            if raw_full:
+                upsert_conversation(session_id, model, messages + [{"role": "assistant", "content": raw_full}])
+
         except Exception as e:
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
-        finally:
-            if full_res:
-                messages.append({"role": "assistant", "content": full_res})
-                upsert_conversation(session_id, model, messages)
-                tokens = estimate_tokens(messages)
-            else:
-                tokens = estimate_tokens(messages)
-            yield f"data: {json.dumps({'done': True, 'tokens': tokens})}\n\n"
 
     return StreamingResponse(stream_generator(), media_type="text/event-stream")
 

@@ -9,6 +9,7 @@ ENV/
 config.json
 history.json
 memory.json
+usage_stats.json
 
 # Cache
 __pycache__/
