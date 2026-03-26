@@ -1,0 +1,23 @@
+# Environments
+.env
+.venv/
+env/
+venv/
+ENV/
+
+# Project configuration and local data (SENSITIVE)
+config.json
+history.json
+memory.json
+
+# Cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
