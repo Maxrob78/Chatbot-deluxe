@@ -124,15 +124,23 @@
 
     .model-price-tag {
       font-size: 9px;
-      padding: 1px 4px;
-      background: var(--gold-glow2);
+      padding: 1px 6px;
+      background: var(--bg-surface);
       border: 1px solid var(--gold-dim);
       color: var(--gold);
       border-radius: 4px;
       margin-left: 8px;
       flex-shrink: 0;
-      opacity: 0.8;
+      opacity: 0.9;
       transition: all 0.3s ease-in-out;
+      position: absolute;
+      right: 14px;
+      top: 50%;
+      transform: translateY(-50%);
+      z-index: 5;
+      box-shadow: 0 0 10px rgba(0,0,0,0.5);
+      backdrop-filter: blur(4px);
+      white-space: nowrap;
     }
 
     .model-price-tag:hover {
@@ -148,6 +156,24 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
+      position: relative;
+      padding: 8px 14px;
+      font-size: 12px;
+      color: var(--white-dim);
+      cursor: pointer;
+      transition: background var(--transition), color var(--transition);
+      border-bottom: 1px solid var(--border);
+      min-height: 48px;
+    }
+
+    .model-option:hover {
+      background: var(--bg-hover);
+      color: var(--white);
+    }
+
+    .model-option.selected {
+      background: var(--gold-glow2);
+      color: var(--gold);
     }
 
 
@@ -3250,37 +3276,28 @@
       line-height: 1.6;
     }
 
-    .model-option {
-      padding: 8px 14px;
-      font-size: 12px;
-      color: var(--white-dim);
-      cursor: pointer;
-      transition: background var(--transition), color var(--transition);
-      border-bottom: 1px solid var(--border);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-
-    .model-option:last-child {
-      border-bottom: none;
-    }
-
-    .model-option:hover {
-      background: var(--bg-hover);
-      color: var(--white);
-    }
-
-    .model-option.selected {
-      background: var(--gold-glow2);
-      color: var(--gold);
-    }
-
     .model-option .provider {
       font-size: 10px;
       color: var(--white-faint);
       display: block;
       margin-top: 1px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .model-info-text {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      padding-right: 60px; /* Space for the price tag to not overlap text too much */
+    }
+
+    .model-name-text {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      display: block;
     }
 
     /* Console */
@@ -3454,7 +3471,7 @@
             <div id="model-dropdown"
               style="display:none;position:absolute;top:100%;left:0;right:0;z-index:200;background:var(--bg-surface);border:1px solid var(--border-light);border-radius:var(--radius);max-height:220px;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,.6);margin-top:3px;">
               <div
-                style="padding:6px 8px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg-surface);">
+                style="padding:6px 8px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg-surface);z-index:10;">
                 <input type="text" id="model-search" class="field-input" placeholder="🔍 Filtrer les modèles…"
                   style="margin:0;font-size:12px" autocomplete="off" />
               </div>
@@ -3981,7 +3998,7 @@
         const badge = visionModels.has(m) ? '<span style="font-size:9px;color:var(--gold-dim);margin-left:4px">👁</span>' : '';
         const detail = modelDetails[m] || {};
         const price = detail.price ? '<span class="model-price-tag">' + detail.price + '</span>' : '';
-        div.innerHTML = '<div style="flex:1">' + name + badge + '<span class="provider">' + provider + '</span></div>' + price;
+        div.innerHTML = '<div class="model-info-text"><span class="model-name-text">' + name + badge + '</span><span class="provider">' + provider + '</span></div>' + price;
         div.title = m; div.onclick = () => { selectModel(m); closeModelDropdown(); saveConfig(); };
         list.appendChild(div);
       });

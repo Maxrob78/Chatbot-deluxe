@@ -49,12 +49,16 @@ app = FastAPI()
 
 @app.on_event("startup")
 async def startup_event():
-    """Precharge les scores Artificial Analysis au demarrage."""
+    """Precharge les scores Artificial Analysis au demarrage et lance le watcher."""
     try:
         cfg = load_config()
         await load_aa_scores(cfg.get("aa_api_key", ""))
+        # Lancer le watcher en tâche de fond
+        import asyncio
+        asyncio.create_task(run_project_watcher())
+        print("[STARTUP] Watcher de projet lancé.")
     except Exception as e:
-        print(f"[STARTUP] Erreur AA (non bloquant): {e}")
+        print(f"[STARTUP] Erreur startup (non bloquant): {e}")
 
 
 # ─────────────────────────────────────────────
@@ -271,9 +275,24 @@ def estimate_tokens(messages: list) -> int:
             total += len(_tokenizer.encode(text_content))
         else:
             # Fallback approximatif si la lib n'est pas chargée
+            # Fallback approximatif si la lib n'est pas chargée
             total += len(text_content) // 4
             
     return total
+
+def trim_history(messages: list, max_length: int = 20, keep_start: int = 2, keep_end: int = 10) -> list:
+    """Réduit l'historique de la conversation si elle devient trop longue."""
+    if len(messages) <= max_length:
+        return messages
+    
+    start_msgs = messages[:keep_start]
+    end_msgs = messages[-keep_end:]
+    
+    trimmed = start_msgs + [
+        {"role": "system", "content": f"[... {len(messages) - keep_start - keep_end} messages anciens ont été compressés (Context Trimmer actif) ...]"}
+    ] + end_msgs
+    
+    return trimmed
 
 # ─────────────────────────────────────────────
 #  ROUTES — CONFIG
@@ -351,7 +370,11 @@ async def get_models():
                 p = m.get("pricing", {})
                 try:
                     # Prix par 1M tokens (completion)
-                    cost = float(p.get("completion", 0)) * 1_000_000
+                    completion_val = float(p.get("completion", 0))
+                    # OpenRouter peut renvoyer -1 pour des prix inconnus/vagues
+                    if completion_val < 0: return "—"
+                    
+                    cost = completion_val * 1_000_000
                     if cost == 0: return "Gratuit"
                     return f"${cost:.2f}/M" if cost < 1 else f"${cost:.1f}/M"
                 except: return "—"
@@ -910,6 +933,151 @@ async def search_endpoint(q: str = ""):
 # ─────────────────────────────────────────────
 #  DEVELOPER TOOLS LOGIC (Aider-style & Git)
 # ─────────────────────────────────────────────
+def validate_code_syntax(file_path: pathlib.Path) -> str | None:
+    """Vérifie la syntaxe d'un fichier source et retourne l'erreur si invalide."""
+    ext = file_path.suffix.lower()
+    try:
+        # Python
+        if ext == ".py":
+            import ast
+            content = file_path.read_text(encoding="utf-8", errors="replace")
+            ast.parse(content, filename=file_path.name)
+            return None
+        
+        # JS/TS
+        elif ext in [".js", ".jsx", ".ts", ".tsx"]:
+            import subprocess
+            res = subprocess.run(["node", "-c", str(file_path)], capture_output=True, text=True, timeout=5)
+            if res.returncode != 0:
+                err = res.stderr.strip() if res.stderr else res.stdout.strip()
+                return err if err else "Erreur de syntaxe JS/TS détectée (node -c)."
+            return None
+            
+        # PHP
+        elif ext == ".php":
+            import subprocess
+            res = subprocess.run(["php", "-l", str(file_path)], capture_output=True, text=True, timeout=5)
+            if res.returncode != 0:
+                return res.stdout.strip() or "Erreur de syntaxe PHP détectée."
+            return None
+            
+        # C / C++ (Nécessite gcc)
+        elif ext in [".c", ".cpp", ".cc", ".h", ".hpp"]:
+            import subprocess
+            # -fsyntax-only vérifie juste la syntaxe sans générer d'objet
+            compiler = "g++" if ext in [".cpp", ".cc", ".hpp"] else "gcc"
+            try:
+                res = subprocess.run([compiler, "-fsyntax-only", str(file_path)], capture_output=True, text=True, timeout=5)
+                if res.returncode != 0:
+                    return res.stderr.strip() or "Erreur de syntaxe C/C++ détectée."
+            except FileNotFoundError:
+                pass # Compilateur non installé, on ignore silencieusement
+            return None
+
+        # Go
+        elif ext == ".go":
+            import subprocess
+            try:
+                # go build -o nul (Windows) ou /dev/null
+                null_dev = "NUL" if os.name == 'nt' else "/dev/null"
+                res = subprocess.run(["go", "build", "-o", null_dev, str(file_path)], capture_output=True, text=True, timeout=5)
+                if res.returncode != 0:
+                    return res.stderr.strip() or "Erreur de syntaxe Go détectée."
+            except FileNotFoundError:
+                pass
+            return None
+
+    except SyntaxError as e:
+        return f"SyntaxError ligne {e.lineno}, colonne {e.offset}: {e.msg}\nLigne suspecte : {e.text}"
+    except Exception:
+        return None
+    return None
+
+def extract_skeleton(file_path: pathlib.Path) -> str:
+    """Extrait la structure haut niveau (classes, def, objets) d'un fichier."""
+    try:
+        content = file_path.read_text(encoding="utf-8", errors="ignore")
+        lines = content.splitlines()
+        skeleton = []
+        ext = file_path.suffix.lower()
+        import re
+        
+        # --- PYTHON ---
+        if ext == ".py":
+            class_re = re.compile(r"^\s*class\s+([a-zA-Z0-9_]+)")
+            def_re = re.compile(r"^\s*(?:async\s+)?def\s+([a-zA-Z0-9_]+)\s*\(")
+            for i, line in enumerate(lines, 1):
+                if m := class_re.search(line):
+                    skeleton.append(f"L{i}: class {m.group(1)}")
+                elif m := def_re.search(line):
+                    indent = len(line) - len(line.lstrip())
+                    prefix = "  - " if indent > 0 else "+ "
+                    skeleton.append(f"L{i}: {prefix}def {m.group(1)}")
+                    
+        # --- JS / TS / JSX ---
+        elif ext in [".js", ".jsx", ".ts", ".tsx"]:
+            class_re = re.compile(r"^\s*(?:export\s+)?class\s+([a-zA-Z0-9_]+)")
+            func_re = re.compile(r"^\s*(?:export\s+)?(?:async\s+)?function\s+([a-zA-Z0-9_]+)")
+            arrow_re = re.compile(r"^\s*(?:export\s+)?const\s+([a-zA-Z0-9_]+)\s*=\s*(?:async\s+)?(?:\([^)]*\)|[a-zA-Z0-9_]+)\s*=>")
+            for i, line in enumerate(lines, 1):
+                if m := class_re.search(line):
+                    skeleton.append(f"L{i}: class {m.group(1)}")
+                elif m := func_re.search(line):
+                    skeleton.append(f"L{i}: function {m.group(1)}")
+                elif m := arrow_re.search(line):
+                    skeleton.append(f"L{i}: const {m.group(1)} (arrow)")
+        
+        # --- PHP ---
+        elif ext == ".php":
+            php_re = re.compile(r"^\s*(?:abstract\s+|final\s+)?(?:class|trait|interface|function)\s+([a-zA-Z0-9_]+)")
+            for i, line in enumerate(lines, 1):
+                if m := php_re.search(line):
+                    prefix = ""
+                    if "function" in line: prefix = "f: "
+                    elif "class" in line: prefix = "c: "
+                    skeleton.append(f"L{i}: {prefix}{m.group(1)}")
+
+        # --- C / C++ ---
+        elif ext in [".c", ".cpp", ".cc", ".h", ".hpp"]:
+            # Capture rudimentaire des définitions (pas de point virgule à la fin et présence de parenthèse)
+            # Match: Type Name(Args) {
+            cpp_func = re.compile(r"^\s*(?:[a-zA-Z0-9_<>*:]+\s+)+([a-zA-Z0-9_]+)\s*\([^)]*\)\s*(?:const)?\s*\{?$")
+            cpp_class = re.compile(r"^\s*(?:class|struct)\s+([a-zA-Z0-9_]+)\s*(?::|\{|$)")
+            for i, line in enumerate(lines, 1):
+                if m := cpp_class.search(line):
+                    skeleton.append(f"L{i}: struct/class {m.group(1)}")
+                elif m := cpp_func.search(line.strip()):
+                    skeleton.append(f"L{i}: func {m.group(1)}")
+
+        # --- JAVA ---
+        elif ext == ".java":
+            java_class = re.compile(r"^\s*(?:public|private|protected|static|\s)*\s*(?:class|interface|enum)\s+([a-zA-Z0-9_]+)")
+            java_method = re.compile(r"^\s*(?:public|private|protected|static|final|\s)*\s*[a-zA-Z0-9_<>]+\s+([a-zA-Z0-9_]+)\s*\([^)]*\)\s*\{?$")
+            for i, line in enumerate(lines, 1):
+                if m := java_class.search(line):
+                    skeleton.append(f"L{i}: class {m.group(1)}")
+                elif (m := java_method.search(line)) and "return " not in line:
+                    skeleton.append(f"L{i}:   - method {m.group(1)}")
+
+        # --- GO ---
+        elif ext == ".go":
+            go_type = re.compile(r"^type\s+([a-zA-Z0-9_]+)\s+(?:struct|interface)")
+            go_func = re.compile(r"^func\s+(?:\([^)]+\)\s+)?([a-zA-Z0-9_]+)\s*\(")
+            for i, line in enumerate(lines, 1):
+                if m := go_type.search(line):
+                    skeleton.append(f"L{i}: type {m.group(1)}")
+                elif m := go_func.search(line):
+                    skeleton.append(f"L{i}: func {m.group(1)}")
+
+        else:
+             return f"(Extension {ext} non supportée pour l'extraction de structure)"
+             
+        if not skeleton:
+            return "(Aucune structure détectable trouvée)"
+        return "\n".join(skeleton)
+    except Exception as e:
+        return f"(Erreur d'extraction: {str(e)})"
+
 def apply_aider_diff(content: str, patch: str) -> str:
     """Applique un patch au format SEARCH/REPLACE (Aider style)."""
     import re
@@ -1009,6 +1177,19 @@ AGENT_TOOLS_SCHEMA = [
     {
         "type": "function",
         "function": {
+            "name": "map_project",
+            "description": "Extrait la structure architecturale (Sitemap des classes/fonctions) d'un fichier ou de tous les fichiers d'un dossier spécifié. Idéal pour comprendre un gros fichier sans le lire en entier.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Chemin relatif du fichier ou dossier (ex: 'main.py' ou 'src/'). Si vide, cible la racine MCP.", "default": "."}
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "run_python",
             "description": "Exécute du code Python côté serveur et retourne la sortie.",
             "parameters": {
@@ -1091,6 +1272,21 @@ AGENT_TOOLS_SCHEMA = [
             }
         }
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "run_tests",
+            "description": "Lance des tests unitaires ou un script pour valider le code. Utile pour implémenter un correctif parfait (TDD loop).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "test_file": {"type": "string", "description": "Le fichier de test/script à exécuter (ex: test.py, main.py)"},
+                    "command": {"type": "string", "description": "Optionnel: La commande spécifique (ex: 'pytest')" }
+                },
+                "required": ["test_file"]
+            }
+        }
+    },
 ]
 
 async def execute_tool(name: str, args: dict) -> str:
@@ -1129,7 +1325,13 @@ async def execute_tool(name: str, args: dict) -> str:
                 return "Erreur : accès refusé."
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding="utf-8")
-            return f"Fichier écrit avec succès : {path} ({len(content.encode())} bytes)"
+            
+            # Validation automatique
+            base_msg = f"Fichier écrit avec succès : {path} ({len(content.encode())} bytes)."
+            err = validate_code_syntax(target)
+            if err:
+                return f"{base_msg}\n\nATTENTION : Une erreur de syntaxe a été détectée dans le code sauvegardé.\nCorrige-la immédiatement :\n{err}"
+            return base_msg
 
         elif name == "list_files":
             if not MCP_ROOT:
@@ -1190,7 +1392,13 @@ async def execute_tool(name: str, args: dict) -> str:
                 old_text = target.read_text(encoding="utf-8")
                 new_text = apply_aider_diff(old_text, diff)
                 target.write_text(new_text, encoding="utf-8")
-                return f"Fichier {path} modifié avec succès (Diff appliqué)."
+                
+                # Validation automatique
+                base_msg = f"Fichier {path} modifié avec succès (Diff appliqué)."
+                err = validate_code_syntax(target)
+                if err:
+                    return f"{base_msg}\n\nATTENTION : L'application du diff a introduit une ERREUR DE SYNTAXE.\nCorrige-la immédiatement :\n{err}"
+                return base_msg
             except Exception as e:
                 return f"Erreur application Diff : {str(e)}"
 
@@ -1211,6 +1419,37 @@ async def execute_tool(name: str, args: dict) -> str:
             except Exception as e:
                 return f"Erreur Git : {str(e)}"
                         
+        elif name == "run_tests":
+            if not MCP_ROOT: return "Erreur : aucun dossier MCP configuré."
+            test_file = args.get("test_file","")
+            command = args.get("command","")
+            
+            target = (MCP_ROOT / test_file).resolve()
+            if not target.is_file(): return f"Erreur : fichier de test introuvable : {test_file}"
+            
+            ext = target.suffix.lower()
+            if not command:
+                if ext == ".py": command = f"python -m pytest {test_file} -v" if target.parent.joinpath("pytest.ini").exists() or target.name.startswith("test_") else f"python {test_file}"
+                elif ext in [".js", ".ts", ".jsx", ".tsx"]: command = f"npx jest {test_file}" if "test" in target.name else f"node {test_file}"
+                elif ext == ".go": command = f"go test {test_file}"
+                elif ext == ".php": command = f"phpunit {test_file}" if "test" in target.name else f"php {test_file}"
+                else: return f"Impossible de déduire la commande de test pour cette extension ({ext}). Indiquez la commande explicitement."
+            
+            import subprocess
+            try:
+                res = subprocess.run(command, cwd=str(MCP_ROOT), shell=True, capture_output=True, text=True, timeout=30)
+                out = res.stdout if res.stdout else ""
+                err = res.stderr if res.stderr else ""
+                result = out + "\n" + err
+                if res.returncode == 0:
+                    return f"Tests réussis ({command}) :\n{result.strip()}"
+                else:
+                    return f"Les tests ont ÉCHOUÉ (code {res.returncode}) :\n{result.strip()}\n-> Analyse l'erreur et lance à nouveau les outils de modification pour corriger le tir."
+            except subprocess.TimeoutExpired:
+                 return f"Erreur : Délai dépassé (timeout 30s) pour {command}"
+            except Exception as e:
+                return f"Erreur lors de l'exécution des tests : {str(e)}"
+                
         elif name == "search_project":
             if not MCP_ROOT: return "Erreur : aucun dossier MCP configuré."
             query = str(args.get("query","")).lower()
@@ -1239,6 +1478,36 @@ async def execute_tool(name: str, args: dict) -> str:
                 if len(matches) >= 30: break
             
             return "\n".join(matches) if matches else "Aucune occurrence trouvée."
+
+        elif name == "map_project":
+            if not MCP_ROOT: return "Erreur : aucun dossier MCP configuré."
+            path_arg = args.get("path", ".")
+            import pathlib
+            target = (MCP_ROOT / path_arg).resolve()
+            if not str(target).startswith(str(MCP_ROOT)):
+                return "Erreur : accès refusé hors du dossier MCP."
+            
+            if target.is_file():
+                res = f"--- Structure de {target.relative_to(MCP_ROOT)} ---\n"
+                res += extract_skeleton(target)
+                return res
+            elif target.is_dir():
+                output = []
+                for p in target.rglob("*"):
+                    if p.is_file():
+                        ext = p.suffix.lower()
+                        if ext in [".py", ".js", ".ts", ".jsx", ".tsx"]:
+                            parts_low = [pt.lower() for pt in p.parts]
+                            if any(pt.startswith('.') for pt in p.parts) or "node_modules" in parts_low or "__pycache__" in parts_low:
+                                continue
+                            sk = extract_skeleton(p)
+                            if not sk.startswith("("):
+                                output.append(f"--- Fichier: {p.relative_to(MCP_ROOT)} ---")
+                                output.append(sk)
+                                output.append("")
+                return "\n".join(output) if output else "(Aucun fichier de code parsable trouvé)"
+            else:
+                return "Chemin invalide."
 
         elif name == "run_shell":
             import subprocess
@@ -1312,7 +1581,11 @@ async def agent_endpoint(req: Request):
     temperature   = body.get("temperature", 0.7)
     max_tokens    = body.get("max_tokens", 4096)
     session_id    = body.get("session_id","")
+    session_id    = body.get("session_id","")
     system_prompt = cfg.get("system_prompt","Tu es un assistant utile, précis et concis.")
+    
+    # Règle automatique TDD
+    system_prompt += "\n\nRègle absolue (Mode Autonome) : Avant de terminer une tâche de dev importante, utilise run_tests si possible pour t'assurer que ton code fonctionne. S'il y a une erreur, tu dois utiliser les outils pour te corriger."
 
     # Injecter mémoire et date
     date_info    = get_current_date_info()
@@ -1358,6 +1631,7 @@ async def agent_endpoint(req: Request):
                     break
         processed_messages.append(m)
 
+    processed_messages = trim_history(processed_messages)
     agent_messages += processed_messages
     max_iterations = 15
 
@@ -1984,19 +2258,30 @@ def b25_score(query_tokens: List[str], chunk_tokens: Counter, avg_len: float, n_
         score += idf * (num / den)
     return score
 
-async def rag_index_internal(paths: List[str]):
+async def rag_index_internal(paths: List[str], partial: bool = False):
     global _RAG_INDEX
-    new_index = []
+    # Si mise à jour partielle, on conserve les fichiers non mentionnés
+    if partial:
+        new_index = [f for f in _RAG_INDEX if f["path"] not in paths]
+    else:
+        new_index = []
+        
     base = MCP_ROOT if MCP_ROOT else _BASE_DIR
-    # base est maintenant toujours un Path object
     for rel in paths:
         try:
             abs_p = (base / rel).resolve()
             if not str(abs_p).startswith(str(base)): continue
-            if not abs_p.is_file(): continue
+            # Supprimer de l'index si fichier supprimé
+            if not abs_p.is_file(): 
+                continue
             
+            # Ignorer dossiers techniques
+            parts_low = [pt.lower() for pt in abs_p.parts]
+            if any(pt.startswith('.') for pt in abs_p.parts) or "node_modules" in parts_low or "__pycache__" in parts_low:
+                continue
+
             content = abs_p.read_text(encoding="utf-8", errors="replace")
-            # Chunking simple (par paragraphes ou 1500 chars)
+            # Chunking simple
             chunks_raw = [content[i:i+1500] for i in range(0, len(content), 1000)]
             chunks = []
             for c in chunks_raw:
@@ -2006,6 +2291,47 @@ async def rag_index_internal(paths: List[str]):
     
     _RAG_INDEX = new_index
     return {"ok": True, "files": len(_RAG_INDEX), "chunks": sum(len(f["chunks"]) for f in _RAG_INDEX)}
+
+async def run_project_watcher():
+    """Tâche de fond surveillant les changements de fichiers dans MCP_ROOT."""
+    import asyncio
+    from watchfiles import awatch, Change
+    
+    last_root = None
+    while True:
+        try:
+            current_root = MCP_ROOT
+            if not current_root:
+                await asyncio.sleep(5)
+                continue
+            
+            print(f"[WATCHER] Surveillance de : {current_root}")
+            # awatch surveille récursivement par défaut
+            async for changes in awatch(current_root):
+                files_to_update = []
+                for change_type, path_str in changes:
+                    p = pathlib.Path(path_str)
+                    try:
+                        rel = str(p.relative_to(current_root))
+                        # Ignorer les fichiers temporaires/système
+                        if any(pt.startswith('.') for pt in p.parts) or "node_modules" in p.parts or "__pycache__" in p.parts:
+                            continue
+                        files_to_update.append(rel)
+                    except ValueError:
+                        continue
+                
+                if files_to_update:
+                    print(f"[WATCHER] Update RAG pour : {files_to_update}")
+                    await rag_index_internal(files_to_update, partial=True)
+                
+                # Petite pause pour ne pas saturer si modifs massives
+                await asyncio.sleep(0.5)
+
+            # Si on sort de la boucle awatch (ex: root changé)
+            await asyncio.sleep(2)
+        except Exception as e:
+            print(f"[WATCHER] Erreur: {e}")
+            await asyncio.sleep(5)
 
 @app.post("/api/rag/index")
 async def rag_index_files_route(req: Request):
