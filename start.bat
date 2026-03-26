@@ -1,14 +1,25 @@
 @echo off
+setlocal enabledelayedexpansion
+title Chatbot Deluxe 2000 - Professional Agent
+color 0B
 cd /d "%~dp0"
 
-echo ============================================
-echo  Chatbot 2000 Pro
-echo ============================================
-echo.
+echo ========================================================
+echo.  _____  _           _    _             _     
+echo. / ____^| ^|         ^| ^|  ^| ^|           ^| ^|    
+echo. ^| ^|     ^| ^|__   __^| ^|__^| ^|__   ___ ^| ^|_   
+echo. ^| ^|     ^| '_ \ / _` ^| '_ \ / _ \ ^| __^|  
+echo. ^| ^|____ ^| ^| ^| ^| (_^| ^| ^|_) ^| (_) ^| ^|_   
+echo.  \_____^| ^|_^| ^|_^|\__,_^|_.__/ \___/ \__^|  
+echo.                                          
+echo.          AGENTIC DEVELOPMENT FLOW
+echo ========================================================
+echo [SYSTEM] Verification de l'environnement...
 
-:: Vérifier que Python est installé
+:: 1. Verifier Python
 python --version >nul 2>&1
 if errorlevel 1 (
+    color 0C
     echo [ERREUR] Python n'est pas installe ou pas dans le PATH.
     echo Telechargez Python sur https://www.python.org/downloads/
     echo Cochez bien "Add Python to PATH" lors de l'installation.
@@ -16,33 +27,49 @@ if errorlevel 1 (
     exit /b 1
 )
 
-:: Vérifier et installer les dépendances à chaque lancement (très rapide si déjà installées)
-echo Verification des dependances...
+:: 2. Verifier les dependances
+echo [SYSTEM] Verification des dependances (pip install)...
 python -m pip install -r requirements.txt >nul
 if errorlevel 1 (
+    color 0C
     echo [ERREUR] L'installation des dependances a echoue.
     echo Essayez manuellement : pip install -r requirements.txt
     pause
     exit /b 1
 )
-echo Dependances OK.
-echo.
+echo [OK]     Dependances verifiees.
 
-:: Tuer l'ancien serveur si actif
-echo Arret de l'ancien serveur si actif...
+:: 3. Verifier la config (cle API)
+if exist "config.json" (
+    findstr /C:"\"api_key\": \"\"" config.json >nul
+    if not errorlevel 1 (
+        color 0E
+        echo [WARNING] Votre cle API OpenRouter semble vide dans config.json.
+        echo           Saisissez-la dans les parametres du Chatbot une fois ouvert.
+    ) else (
+        echo [OK]     Configuration trouvee.
+    )
+) else (
+    echo [INFO]    Premier lancement - config.json sera cree par l'application.
+)
+
+:: 4. Nettoyage
+echo [SYSTEM] Arret de l'ancienne instance sur le port 8000...
 for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":8000 "') do (
     taskkill /F /PID %%a >nul 2>&1
 )
-timeout /t 2 /nobreak >nul
+timeout /t 1 /nobreak >nul
 
-:: Lancer
-echo Demarrage du serveur...
+:: 5. Lancement
+echo [SYSTEM] Demarrage du serveur Uvicorn...
 start "" http://localhost:8000
 
 echo.
-echo  Chatbot 2000 tourne sur http://localhost:8000
-echo  Fermez cette fenetre pour arreter le serveur.
+echo ========================================================
+echo  URL ACCESSIBLE : http://localhost:8000
+echo  LOGS DU SERVEUR : (voir ci-dessous)
+echo ========================================================
 echo.
 
-python -m uvicorn main:app --port 8000
+python -m uvicorn main:app --port 8000 --log-level info
 pause
