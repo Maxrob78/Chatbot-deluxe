@@ -4,7 +4,7 @@ import base64
 import io
 from datetime import datetime
 from fastapi import FastAPI, Request, UploadFile, File, Form
-from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, Response
 from pdfminer.high_level import extract_text as pdf_extract_text
 import httpx
 import re
@@ -14,6 +14,7 @@ import subprocess
 import pathlib
 import math
 from collections import Counter
+import uuid
 from typing import List, Dict, Any, Optional
 
 # ─────────────────────────────────────────────
@@ -49,6 +50,13 @@ OPENROUTER_HEADERS = {
 
 app = FastAPI()
 
+# Montage des dossiers statiques pour éviter les 404 (assets, dist, etc.)
+from fastapi.staticfiles import StaticFiles
+for folder in ["assets", "dist", "static"]:
+    full_path = os.path.join(_BASE_DIR, folder)
+    if os.path.exists(full_path):
+        app.mount(f"/{folder}", StaticFiles(directory=full_path), name=folder)
+
 @app.on_event("startup")
 async def startup_event():
     """Precharge les scores Artificial Analysis au demarrage et lance le watcher."""
@@ -83,7 +91,12 @@ def save_config(data: dict):
 def load_history() -> list:
     if not os.path.exists(HISTORY_FILE): return []
     with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-        try: return json.load(f)
+        try: 
+            data = json.load(f)
+            # Nettoyer les sessions de génération de titre accidentelles
+            if isinstance(data, list):
+                return [c for c in data if not str(c.get("id", "")).startswith("title-gen-")]
+            return []
         except: return []
 
 def save_history(history: list):
@@ -167,6 +180,15 @@ async def get_stats_route():
 async def reset_stats():
     if os.path.exists(STATS_FILE): os.remove(STATS_FILE)
     return load_stats()
+
+# ─────────────────────────────────────────────
+#  HELPERS — HISTORY
+# ─────────────────────────────────────────────
+def trim_history(messages: list) -> list:
+    """Limite l'historique aux 25 derniers messages pour éviter de saturer le contexte."""
+    if len(messages) <= 25:
+        return messages
+    return messages[-25:]
 
 # ─────────────────────────────────────────────
 #  BUSINESS LOGIC (Git, MCP, RAG)
@@ -905,9 +927,18 @@ def should_search(messages: list) -> str | None:
 
     # ── 1. PRIORITÉ ABSOLUE : Les demandes explicites ou hyper-actuelles ──
     if RE_EXPLICIT_SEARCH.search(low):
+        # Pour le sport, force brute pour DuckDuckGo avec termes exclusifs
+        if any(k in low for k in ["match", "foot", "score"]):
+            date_today = get_current_date_info().split(',')[0] # ex: "Jeudi 26 Mars 2026"
+            return f"football matches results {date_today} live score scores site:fotmob.com OR site:livescore.com"
         return text
 
-    # ── 2. ENRICHISSEMENT AUTO (Sport, PSG, Calendrier) ──
+    # ── 2. ENRICHISSEMENT AUTO (Sport, Finance, News) ──
+    # Forcer l'année actuelle pour éviter les archives (le "bug de 1978")
+    if any(k in low for k in ["match", "foot", "score", "bourse", "prix", "météo", "news", "actu"]):
+        if "202" not in low:
+            text += " 2026"
+
     if "psg" in low and any(k in low for k in ["match", "adversaire", "calendrier", "joue", "prochain"]):
         return text + " calendrier officiel complet Ligue 1 2026"
 
@@ -951,21 +982,20 @@ def build_search_context(results: list, query: str) -> str:
     """Formate les résultats pour injection dans le contexte."""
     if not results:
         return ""
-    date_info = get_current_date_info()
-    lines = [f"[Recherche web — {query}]", f"[{date_info}]", ""]
-    for i, r in enumerate(results, 1):
-        lines.append(f"## {r.get('title','Source ' + str(i))}")
-        if r.get('href'): lines.append(f"LIEN: {r['href']}")
+    # On injecte aussi la date du jour pour que l'IA compare
+    date_now = get_current_date_info()
+    context = f"INFORMATION SYSTÈME : Nous sommes le {date_now}. Les résultats ci-dessous DOIVENT dater de 2026.\n\n"
+    
+    for i, res in enumerate(results):
+        txt = res.get('text', '')
+        # Détection de date désuète
+        warning = ""
+        if "2024" in txt and "2026" not in txt:
+            warning = " [ATTENTION : ARCHIVE 2024 - NE PAS UTILISER POUR AUJOURD'HUI]"
         
-        body = r.get("content") or r.get("snippet","")
-        if body:
-            # On réduit un peu la taille pour le contexte
-            lines.append(body[:1200])
-        lines.append("")
-        
-    lines.append("[INSTRUCTION : Analyse ces résultats. Réponds directement si tu as l'info. Si tu fais de nouvelles recherches, sois plus spécifique.]")
-    lines.append("[Note : Citations Markdown cliquables requises.]")
-    return "\n".join(lines)
+        context += f"--- SOURCE {i+1}: {res.get('url','')} {warning} ---\n"
+        context += f"{txt[:2500]}\n\n"
+    return context
 
 @app.get("/api/search")
 async def search_endpoint(q: str = ""):
@@ -1150,13 +1180,27 @@ AGENT_TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "web_search",
-            "description": "Recherche des informations récentes sur le web via DuckDuckGo.",
+            "description": "Recherche des informations récentes sur le web via DuckDuckGo (snippets).",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "La requête de recherche"}
                 },
                 "required": ["query"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_url",
+            "description": "Lit et extrait TOUT le texte d'une page web (URL). INDISPENSABLE pour résumer des articles, lire de la documentation technique ou analyser le contenu d'un lien fourni par l'utilisateur.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "L'URL valide à parcourir (commençant par http)."}
+                },
+                "required": ["url"]
             }
         }
     },
@@ -1331,6 +1375,20 @@ AGENT_TOOLS_SCHEMA = [
             }
         }
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_image",
+            "description": "Génère une image à partir d'une description textuelle en anglais (prompt) et l'affiche à l'utilisateur.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {"type": "string", "description": "Description ultra-détaillée de l'image (en anglais de préférence pour une meilleure qualité)."}
+                },
+                "required": ["prompt"]
+            }
+        }
+    }
 ]
 
 async def execute_tool(name: str, args: dict) -> str:
@@ -1340,6 +1398,17 @@ async def execute_tool(name: str, args: dict) -> str:
             results = await ddg_search(args.get("query",""), max_results=4, fetch_content=True)
             if not results: return "Aucun résultat trouvé."
             return build_search_context(results, args.get("query",""))
+
+        elif name == "read_url":
+            url = args.get("url")
+            if not url: return "Erreur : URL manquante."
+            # Appel asynchrone à mcp_fetch_url (qui est défini plus bas)
+            res = await mcp_fetch_url(url)
+            if hasattr(res, "body"): # Si c'est un JSONResponse
+                import json as _json
+                data = _json.loads(res.body.decode())
+                return data.get("content") or data.get("error") or "Contenu vide."
+            return res.get("content") if isinstance(res, dict) else str(res)
 
         elif name == "read_file":
             if not MCP_ROOT:
@@ -1357,6 +1426,28 @@ async def execute_tool(name: str, args: dict) -> str:
             # Utiliser extract_file_text pour supporter PDF, DOCX, CSV, etc.
             content = extract_file_text(target.read_bytes(), target.name, "")
             return content if content else "(fichier vide ou format non supporté)"
+
+        elif name == "generate_image":
+            prompt = args.get("prompt", "")
+            if not prompt: return "Erreur : prompt vide."
+            # Utilisation de Pollinations Enter (Endpoint Allégé)
+            import urllib.parse
+            import random
+            import httpx
+            
+            cfg = load_config()
+            p_key = cfg.get("pollinations_key", "").strip()
+            enhanced = f"{prompt[:400]}, ultra-realistic, high quality, 8k, professional photography, cinematic lighting"
+            # Utilisation du modèle 'flux' (très haute qualité) car nous avons une clé !
+            model = "flux" 
+            seed = random.randint(0, 999999)
+            
+            # On passe les paramètres AVEC la clé API pour l'authentification
+            p_uri = urllib.parse.quote(enhanced)
+            image_url = f"/api/proxy_image?prompt={p_uri}&seed={seed}&model={model}&key={p_key}"
+            # Note: Si Pollinations bloque encore, on passera par un proxy qui masque l'origine.
+            
+            return f"IMAGE_GENERATED: {image_url}\n"
 
         elif name == "write_file":
             if not MCP_ROOT:
@@ -1613,6 +1704,71 @@ async def execute_tool(name: str, args: dict) -> str:
     except Exception as e:
         return f"Erreur lors de l'exécution de {name} : {e}"
 
+def try_extract_tools(text: str) -> list[dict]:
+    """Tente d'extraire des appels d'outils d'un texte brut."""
+    import re
+    calls = []
+    
+    # 1. Format JSON pur : [{"name": "...", "arguments": {...}}]
+    try:
+        # On cherche un bloc JSON qui ressemble à une liste d'outils
+        match = re.search(r"(\[\s*\{\s*\"name\".*\}\s*\])", text, re.DOTALL)
+        if match:
+            data = json.loads(match.group(1))
+            if isinstance(data, list):
+                for item in data:
+                    if "name" in item:
+                        calls.append({
+                            "id": f"call_man_{str(uuid.uuid4())[:8]}",
+                            "type": "function",
+                            "function": {
+                                "name": item["name"],
+                                "arguments": json.dumps(item.get("arguments", {}))
+                            }
+                        })
+                return calls
+    except: pass
+
+    # 2. Format TOOL:name:args (Simplifié)
+    matches = re.findall(r"TOOL:([a-zA-Z0-9_\-]+):(\{.*\}|.*)", text)
+    for name, args_str in matches:
+        try:
+            # Nettoyage des args si ce n'est pas du JSON valide
+            clean_args = args_str.strip()
+            if not clean_args.startswith("{"): clean_args = json.dumps({"query": clean_args})
+            calls.append({
+                "id": f"call_man_{str(uuid.uuid4())[:8]}",
+                "type": "function",
+                "function": { "name": name, "arguments": clean_args }
+            })
+        except: pass
+
+    # 3. Format <function=NAME>{...}</function> (Aider/Qwen)
+    matches = re.findall(r"<function=([a-zA-Z0-9_\-]+)>(.*?)</function>", text, re.DOTALL)
+    for name, args_str in matches:
+        calls.append({
+            "id": f"call_man_{str(uuid.uuid4())[:8]}",
+            "type": "function",
+            "function": { "name": name, "arguments": args_str.strip() }
+        })
+
+    # 4. Format JSON brut direct (ex: web_search{"query": "..."})
+    # On cherche le nom de l'outil suivi immédiatement d'une accolade ouvrante
+    tool_names = ["web_search", "read_url", "read_file", "write_file", "list_files", "search_project", "run_python", "run_shell", "apply_diff", "run_git", "rag_index", "rag_search", "run_tests"]
+    for tn in tool_names:
+        # Regex qui cherche le nom de l'outil puis { jusqu'à } balancé (approximatif) ou fin de bloc JSON
+        # Format: web_search{"query":"..."}
+        json_pattern = rf"{tn}\s*(\{{\s*\".*?\".*?\}})"
+        m_json = re.search(json_pattern, text, re.DOTALL)
+        if m_json:
+            calls.append({
+                "id": f"call_man_{str(uuid.uuid4())[:8]}",
+                "type": "function",
+                "function": { "name": tn, "arguments": m_json.group(1).strip() }
+            })
+        
+    return calls
+
 @app.post("/api/agent")
 async def agent_endpoint(req: Request):
     """Route agent avec function calling natif OpenRouter."""
@@ -1642,6 +1798,33 @@ async def agent_endpoint(req: Request):
     # Contexte MCP
     if MCP_ROOT:
         full_system += f"\n\n[MCP Filesystem actif — racine : {MCP_ROOT}]\nTu peux lire/écrire des fichiers via les outils disponibles."
+    # Instructions Outils WEB & Autonomie
+    full_system += (
+        "\n\n[MODE AGENT ACTIVÉ]\n"
+        "Tu as un accès direct à Internet et aux fichiers locaux. Ne dis JAMAIS que tu ne peux pas accéder à une URL ou faire une recherche.\n"
+        "Outils prioritaires :\n"
+        "- `read_url` : Utilise-le SYSTÉMATIQUEMENT dès qu'un lien (http/https) est présent dans la requête de l'utilisateur pour en lire le contenu.\n"
+        "- `web_search` : Utilise-le pour vérifier des faits, trouver des news ou des solutions techniques récentes.\n"
+        "\n--- RÈGLES D'ACTION ---\n"
+        "1. PAS DE BLA-BLA D'INTRODUCTION : Ne dis jamais 'Je vais chercher...', 'Veuillez patienter...', ou 'Laissez-moi vérifier...'. Appelle l'outil DIRECTEMENT sans aucun texte d'accompagnement.\n"
+        "2. ANALYSE IMMÉDIATE : Si l'utilisateur demande un résumé d'un lien, appelle `read_url` immédiatement.\n"
+        "3. SPORT / BOURSE / NEWS : Si l'utilisateur demande des infos fraîches (matchs ce soir, cours de bourse, news du jour), tu DOIS impérativement utiliser `read_url` sur un site source récent après avoir fait une recherche si nécessaire. Ne donne jamais d'infos basées sur tes connaissances internes obsolètes.\n"
+        "4. RÉPONSE COMPLÈTE : Une fois les données obtenues, donne les scores, les horaires et les noms directement. Ne cite pas juste les sites sources.\n"
+    )
+
+    # Détection URLs pour forcer l'usage
+    last_msg_content = ""
+    if messages:
+        last_msg = messages[-1]
+        if last_msg.get("role") == "user":
+            last_msg_content = str(last_msg.get("content", ""))
+    
+    if "http" in last_msg_content.lower():
+        full_system += "\n\n⚠️ INSTRUCTION CRITIQUE : L'utilisateur a fourni une URL. Tu DOIS utiliser l'outil `read_url` pour en extraire le contenu avant de répondre."
+    
+    search_q = should_search(messages)
+    if search_q:
+        full_system += f"\n\n🚨 ACTION REQUISE : Cette requête nécessite des informations fraîches du web. Tu DOIS utiliser l'outil `web_search` immédiatement avec la requête : '{search_q}'. N'annonce pas ta recherche, fais-la."
 
     # --- LOGIQUE MESSAGES ---
     agent_messages = [{"role": "system", "content": full_system}]
@@ -1675,7 +1858,11 @@ async def agent_endpoint(req: Request):
                     # Ajouter les tools seulement si le modèle les supporte
                     if use_tools:
                         req_body["tools"] = AGENT_TOOLS_SCHEMA
-                        req_body["tool_choice"] = "auto"
+                        # FORCE : Pour le premier tour, on contraint l'IA à utiliser web_search si une requête est prête
+                        if iteration == 1 and search_q:
+                            req_body["tool_choice"] = {"type": "function", "function": {"name": "web_search"}}
+                        else:
+                            req_body["tool_choice"] = "auto"
                         req_body["stream"] = False
                     else:
                         # Fallback : streaming natif sans tools
@@ -1691,44 +1878,144 @@ async def agent_endpoint(req: Request):
                             },
                             json=req_body
                         )
-                        if resp.status_code >= 400:
-                            err_body = resp.json() if resp.status_code != 500 else {"error": "Server Error"}
-                            err_msg  = str(err_body.get("error","")) or str(err_body)
-                            
-                            # Si erreur liée aux tools ou erreur inconnue du provider -> fallback texte
-                            if iteration == 1 or any(k in err_msg.lower() for k in ["tool","function","unsupported","not support","provider","format","context"]):
-                                print(f"[AGENT] Erreur API ({resp.status_code}), tentative fallback texte...")
-                                use_tools = False
-                                iteration -= 1
-                                continue
-                                
-                            yield f"data: {json.dumps({'error': err_msg})}\n\n"
-                            return
+                        if resp.status_code == 429:
+                            # Rate limit - Attendre un peu plus longtemps pour les modèles free
+                            wait_time = 5 * iteration # Augmentation progressive
+                            print(f"[AGENT] Rate Limit (429) sur {model}. Pause de {wait_time}s...")
+                            import asyncio
+                            await asyncio.sleep(wait_time)
+                            continue
+
+                        # --- FALLBACK DE PROTOCOLE (USER-INJECTION) ---
+                        # Si erreur 400 sur un tour d'outil, on suspecte que le provider n'aime pas le format role: tool
+                        if resp.status_code == 400:
+                            err_raw = resp.text
+                            if any(k in err_raw.lower() for k in ["tool","function","unsupported","not support","provider","format","context"]):
+                                if any(m.get("role") == "tool" for m in agent_messages):
+                                    print(f"[AGENT] Erreur 400 sur Tool. Conversion de l'historique en 'User-Injection'...")
+                                    new_history = []
+                                    for m in agent_messages:
+                                        if m.get("role") == "tool":
+                                            new_history.append({"role": "user", "content": f"[RÉSULTAT OUTIL] : {m.get('content')}"})
+                                        elif m.get("role") == "assistant" and "tool_calls" in m:
+                                            m_copy = m.copy()
+                                            if "tool_calls" in m_copy: del m_copy["tool_calls"]
+                                            m_copy["content"] = "[ACTION DEMANDÉE : Recherche effectuée]"
+                                            new_history.append(m_copy)
+                                        else:
+                                            new_history.append(m)
+                                    agent_messages = new_history
+                                    use_tools = False # On finit en mode texte avec le contexte injecté
+                                    continue
+                                else:
+                                    print(f"[AGENT] Erreur API ({resp.status_code}), passage en mode texte...")
+                                    use_tools = False
+                                    continue
                         result  = resp.json()
+                        if "choices" not in result:
+                            err_msg = str(result.get("error", {}).get("message") or result)
+                            print(f"[AGENT] Erreur structurelle API (Pas de 'choices') : {err_msg}")
+                            yield f"data: {json.dumps({'error': f'Erreur Provider : {err_msg}'})}\n\n"
+                            return
+
                         choice  = result["choices"][0]
                         message = choice["message"]
+                        
+                        # --- FIX ANTI-ERREUR 400 ---
+                        # Certains providers (Google/Gemini) refusent si content est None ou vide avec des tool_calls.
+                        if not message.get("content"):
+                            message["content"] = "Analyse en cours..." # Nécessaire pour éviter Erreur 400 (Google/Gemini)
+                        
                         reason  = choice.get("finish_reason","")
                         agent_messages.append(message)
 
-                        # Cas 1 : appel d'outils
-                        if reason == "tool_calls" or message.get("tool_calls"):
-                            tool_calls = message.get("tool_calls",[])
+                        # Cas 1 : appel d'outils (Natif ou Manuel)
+                        tool_calls = message.get("tool_calls", [])
+                        content    = message.get("content") or ""
+                        
+                        # --- EXTRACTEUR MANUEL (Fallback pour modèles rebelles) ---
+                        if not tool_calls and content:
+                            manual_calls = try_extract_tools(content)
+                            if manual_calls:
+                                # CRUCIAL : On génère des IDs pour que le cycle Tool Call -> Tool Result soit valide
+                                for i, mc in enumerate(manual_calls):
+                                    if "id" not in mc:
+                                        mc["id"] = f"manual_{iteration}_{i}_{str(uuid.uuid4())[:8]}"
+                                
+                                tool_calls = manual_calls
+                                # Mise à jour de l'objet dans agent_messages
+                                message["tool_calls"] = tool_calls
+                                # CRUCIAL : Certains providers OpenRouter rejettent si content est "" ou présent avec tool_calls
+                                if "content" in message: del message["content"]
+
+                        # --- HOOK DE FORCE UNIVERSEL (Anti-Laxité / Anti-Hallucination / Anti-Esquive) ---
+                        # On applique ce hook à TOUTES les itérations pour empêcher la politesse à n'importe quel stade
+                        if not tool_calls and search_q:
+                            # Détection d'esquive : politesse, code, demande de source, ou blabla au lieu d'agir
+                            has_code = "```" in content or "import " in content or "requests." in content
+                            lazy_keywords = ["chercher", "recherche", "patienter", "désolé", "je ne peux pas", "voici un code", "your_api_key", "source", "préfèr", "donner moi", "me donner"]
+                            is_lazy = len(content) < 500 or has_code or any(k in (content or "").lower() for k in lazy_keywords)
+                            
+                            if is_lazy:
+                                print(f"[AGENT] Esquive détectée à l'itération {iteration} (Politesse/Code). Rejet immédiat.")
+                                # On nettoie l'historique de cette politesse inutile pour ne pas polluer
+                                if agent_messages and agent_messages[-1].get("role") == "assistant":
+                                    agent_messages.pop()
+                                
+                                agent_messages.append({
+                                    "role": "user", 
+                                    "content": f"🚨 ACTION REQUISE : Tu as répondu par du texte au lieu d'utiliser l'outil `web_search`. C'est INTERDIT.\n\n"
+                                               f"ACTION IMMEDIATE : Utilise l'outil `web_search` avec la requête : '{search_q}'.\n"
+                                               f"INTERDICTION : Ne dis pas 'Je vais chercher', ne sois pas poli. Produis UNIQUEMENT l'appel d'outil."
+                                })
+                                # On ajoute un système prompt temporaire pour forcer le format
+                                agent_messages.append({
+                                    "role": "system",
+                                    "content": "Technical Mode: Output ONLY a JSON tool call or TOOL: format. No conversational text."
+                                })
+                                continue
+
+                        if tool_calls:
                             for tc in tool_calls:
                                 fn_name = tc["function"]["name"]
                                 try:
-                                    fn_args = json.loads(tc["function"].get("arguments","{}"))
+                                    args_raw = tc["function"].get("arguments", "{}")
+                                    fn_args = json.loads(args_raw) if isinstance(args_raw, str) else args_raw
                                 except:
                                     fn_args = {}
+                                
                                 yield f"data: {json.dumps({'tool_call': True, 'tool': fn_name, 'args': fn_args})}\n\n"
                                 tool_result = await execute_tool(fn_name, fn_args)
                                 print(f"[AGENT] {fn_name} → {len(tool_result)} chars")
-                                yield f"data: {json.dumps({'tool_result': True, 'tool': fn_name, 'preview': tool_result[:100]})}\n\n"
-                                agent_messages.append({
+                                yield f"data: {json.dumps({'tool_result': True, 'tool': fn_name, 'preview': tool_result[:100], 'full': tool_result})}\n\n"
+                                
+                                # --- HOOK ANTI-ABANDON (Post-Search) ---
+                                # Si après recherche l'IA dit qu'elle ne trouve rien ou demande une source
+                                safe_content = content.lower() if content else ""
+                                if any(k in safe_content for k in ["source", "donner moi", "me donner", "pas d'informations", "aucun match", "je ne peux pas"]):
+                                    print(f"[AGENT] Abandon détecté après recherche. Rappel à l'ordre.")
+                                    agent_messages.append({
+                                        "role": "user",
+                                        "content": "🚨 ERREUR : Tu as effectué des recherches (voir ci-dessus) mais tu affirmes ne rien trouver ou tu demandes encore une source.\n"
+                                                   "RE-ANALYSE : Les résultats de recherche contiennent des données. Extrais les matchs pour AUJOURD'HUI (2026).\n"
+                                                   "Si vraiment aucun match pro n'existe, indique 'Aucun match majeur trouvé ce soir' au lieu de demander une source."
+                                    })
+                                    # On sort pour refaire un tour avec ce rappel
+                                    break # Sort du for tc in tool_calls
+                                
+                                # Si tout va bien, on enregistre le résultat normalement
+                                import uuid
+                                tc_id = tc.get("id") or f"call_{str(uuid.uuid4())[:12]}"
+                                tool_msg = {
                                     "role": "tool",
-                                    "tool_call_id": tc["id"],
-                                    "content": str(tool_result)[:5000]
-                                })
-                            continue  # Prochain tour de boucle
+                                    "tool_call_id": tc_id,
+                                    "content": str(tool_result)[:6000]
+                                }
+                                agent_messages.append(tool_msg)
+                            
+                            # Après avoir fait tous les tools de ce tour, on continue la réflexion
+                            if any(m.get("role") == "tool" for m in agent_messages):
+                                continue 
 
                         # Cas 2 : réponse finale (non-streaming) → on la stream mot par mot
                         final_text = message.get("content","")
@@ -1750,11 +2037,16 @@ async def agent_endpoint(req: Request):
                         # Fallback : mode texte avec instructions dans le system prompt
                         # Injecter les instructions d'outils dans le dernier message système
                         fallback_system = agent_messages[0]["content"] if agent_messages else ""
+                        
+                        # Liste des outils disponibles en mode texte
+                        tools_info = "\n".join([f"- {t['function']['name']} : {t['function']['description']}" for t in AGENT_TOOLS_SCHEMA])
+                        
                         fallback_system += (
                             "\n\nTu es en mode agent. Pour utiliser un outil, écris EXCLUSIVEMENT la commande au format suivant :\n"
                             "Format: TOOL:<nom>:<argument>\n"
-                            "Note: Si tu utilises un autre format comme <function=...> ou d'autres balises, le système essaiera de l'interpréter mais le format TOOL: est préférable.\n"
-                            "IMPORTANT: N'affiche JAMAIS ces balises à l'utilisateur.\n"
+                            "\nOutils disponibles :\n" + tools_info + "\n"
+                            "\nNote: Si tu utilises un autre format comme <function=...> ou d'autres balises, le système essaiera de l'interpréter mais le format TOOL: est préférable.\n"
+                            "IMPORTANT: N'affiche JAMAIS ces balises TOOL: à l'utilisateur, elles sont pour le système.\n"
                         )
                         fb_messages = [{"role":"system","content":fallback_system}] + agent_messages[1:]
 
@@ -1781,11 +2073,13 @@ async def agent_endpoint(req: Request):
                                         full_text += delta
                                         
                                         # Buffer de sécurité pour éviter de yield les commandes techniques
-                                        if "TOOL:" in full_text or "<function=" in full_text or "<parameter=" in full_text:
+                                        technical_triggers = ["TOOL:", "<function=", "<parameter=", "web_search{", "read_url{", "read_file{", "write_file{"]
+                                        if any(t in full_text for t in technical_triggers):
                                             # On yield tout ce qui précède le premier outil s'il y en a un
-                                            tool_start = full_text.find("TOOL:")
-                                            if tool_start == -1: tool_start = full_text.find("<function=")
-                                            if tool_start == -1: tool_start = full_text.find("<parameter=")
+                                            tool_start = 999999
+                                            for t in technical_triggers:
+                                                pos = full_text.find(t)
+                                                if pos != -1 and pos < tool_start: tool_start = pos
                                             
                                             if last_yielded_idx < tool_start:
                                                 to_yield = full_text[last_yielded_idx:tool_start]
@@ -1866,12 +2160,29 @@ async def get_balance():
     api_key = cfg.get("api_key", "")
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.get(f"{BASE_URL}/auth/key", headers={"Authorization": f"Bearer {api_key}"})
+            r = await client.get(f"{BASE_URL}/credits", headers={"Authorization": f"Bearer {api_key}"})
             r.raise_for_status()
-            data = r.json().get("data", {})
-            usage_usd = data.get('usage', 0)
-            usage_eur = usage_usd * 0.92
-            return {"usage": f"{usage_eur:.4f} €"}
+            resp_json = r.json()
+            inner = resp_json.get("data", resp_json)
+            
+            # Calcul précis basé sur vos données OpenRouter : Credits - Usage
+            credits = inner.get("total_credits", 0)
+            usage = inner.get("total_usage", 0)
+            
+            # Si ces champs sont absents, on cherche 'total'
+            if "total_credits" not in inner and "total" in inner:
+                val = inner["total"]
+            else:
+                val = float(credits) - float(usage)
+
+            try: val = float(val)
+            except: val = 0.0
+
+            return {
+                "usage": f"{val:.4f} $",
+                "usage_eur": f"{val*0.92:.4f} €",
+                "is_negative": val < 0
+            }
     except Exception as e:
         return {"error": str(e)}
 
@@ -1945,6 +2256,7 @@ async def chat(req: Request):
     max_tokens     = body.get("max_tokens", 2048)
     system_prompt  = cfg.get("system_prompt", "Tu es un assistant utile, précis et concis.")
     web_search_on  = body.get("web_search", True)
+    is_title_gen   = body.get("_title_only", False)
 
     # 1. Trimming (Context Trimmer)
     original_tokens = estimate_tokens(messages)
@@ -2081,7 +2393,7 @@ async def chat(req: Request):
                                 yield f"data: {json.dumps({'done': True, 'tokens': p_tok + c_tok})}\n\n"
                         except: pass
             
-            if raw_full:
+            if raw_full and not is_title_gen:
                 upsert_conversation(session_id, model, messages + [{"role": "assistant", "content": raw_full}])
 
         except Exception as e:
@@ -2142,6 +2454,26 @@ async def mcp_set_root(req: Request):
     if not p.exists() or not p.is_dir():
         return JSONResponse({"error": f"Dossier introuvable : {path}"}, status_code=400)
     MCP_ROOT = p
+    
+    # Déclencher une indexation initiale en tâche de fond pour que le RAG soit prêt tout de suite
+    import asyncio
+    async def initial_index():
+        try:
+            paths = []
+            for item in MCP_ROOT.rglob("*"):
+                if item.is_file():
+                    parts_low = [pt.lower() for pt in item.parts]
+                    if not any(pt.startswith('.') for pt in item.parts) and "node_modules" not in parts_low and "__pycache__" in parts_low:
+                        continue
+                    paths.append(str(item.relative_to(MCP_ROOT)))
+            if paths:
+                await rag_index_internal(paths)
+                print(f"[RAG] Indexation automatique terminée : {len(paths)} fichiers.")
+        except Exception as e:
+            print(f"[RAG] Erreur indexation initiale : {e}")
+            
+    asyncio.create_task(initial_index())
+    
     return {"ok": True, "root": str(MCP_ROOT)}
 
 @app.get("/api/mcp/ls")
@@ -2163,6 +2495,42 @@ def mcp_ls(path: str = "."):
                 "ext":  entry.suffix.lstrip('.') if entry.is_file() else None,
             })
         return {"path": str(target.relative_to(MCP_ROOT)), "entries": entries}
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+@app.get("/api/mcp/browse")
+def mcp_browse(path: str = ""):
+    """Parcourt le système de fichiers réel (pour le sélecteur de dossier)."""
+    import os
+    try:
+        p = None
+        if not path:
+            if os.name == 'nt': p = pathlib.Path("C:/")
+            else: p = pathlib.Path.home()
+        else:
+            p = pathlib.Path(path).expanduser().resolve()
+            
+        if not p.exists() or not p.is_dir():
+             # Fallback sur C: si erreur
+             p = pathlib.Path("C:/") if os.name == 'nt' else pathlib.Path.home()
+             
+        entries = []
+        # Parent
+        if p.parent and p.parent != p:
+            entries.append({"name": "..", "path": str(p.parent), "type": "dir", "is_parent": True})
+            
+        # Trier par type puis nom
+        for entry in sorted(p.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower())):
+            try:
+                if entry.name.startswith('$') or entry.name.startswith('.'): continue
+                if entry.is_dir():
+                    entries.append({
+                        "name": entry.name,
+                        "path": str(entry),
+                        "type": "dir"
+                    })
+            except: pass
+        return {"current": str(p), "entries": entries}
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=400)
 
@@ -2204,15 +2572,97 @@ async def mcp_write(req: Request):
 def api_git_status():
     return git_status_logic()
 
-@app.post("/api/git/commit")
-async def api_git_commit(req: Request):
+@app.post("/api/git/clone")
+async def api_git_clone(req: Request):
+    """Clone un dépôt GitHub et le définit comme MCP_ROOT."""
     data = await req.json()
-    message = data.get("message", "Agent update")
-    return git_commit_logic(message)
+    url = data.get("url", "").strip()
+    if not url: return JSONResponse({"error": "URL manquante"}, status_code=400)
+    
+    # Créer un dossier workspaces s'il n'existe pas
+    workspaces = _BASE_DIR / "workspaces"
+    workspaces.mkdir(exist_ok=True)
+    
+    # Extraire le nom du repo de l'URL
+    repo_name = url.split("/")[-1].replace(".git", "")
+    target = workspaces / repo_name
+    
+    import subprocess
+    if target.exists():
+        # Déjà cloné ? On le définit juste comme root
+        global MCP_ROOT
+        MCP_ROOT = target
+        return {"ok": True, "path": str(target), "already_exists": True}
+        
+    try:
+        # Clone
+        res = subprocess.run(f"git clone {url}", cwd=str(workspaces), shell=True, capture_output=True, text=True)
+        if res.returncode != 0:
+            return JSONResponse({"error": res.stderr or "Erreur lors du clone"}, status_code=500)
+            
+        MCP_ROOT = target
+        # Indexation RAG automatique
+        import asyncio
+        async def full_index():
+            paths = []
+            for p in MCP_ROOT.rglob("*"):
+                if p.is_file():
+                    parts_low = [pt.lower() for pt in p.parts]
+                    if not any(pt.startswith('.') for pt in p.parts) and "node_modules" not in parts_low:
+                        paths.append(str(p.relative_to(MCP_ROOT)))
+            if paths: await rag_index_internal(paths)
+        asyncio.create_task(full_index())
+
+        return {"ok": True, "path": str(target)}
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.get("/api/mcp/fetch")
+async def mcp_fetch_url(url: str):
+    """Lit le contenu textuel complet d'une URL."""
+    try:
+        # User-agent pour éviter d'être bloqué (imite un vrai navigateur)
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True, headers=headers) as client:
+            resp = await client.get(url)
+            if resp.status_code != 200:
+                return JSONResponse({"error": f"Erreur HTTP {resp.status_code}"}, status_code=400)
+            
+            # Extraction propre
+            extracted = trafilatura.extract(resp.text)
+            if not extracted:
+                # Fallback sur texte brut (simple)
+                text = re.sub(r'<[^>]+>', ' ', resp.text)
+                text = re.sub(r'\s+', ' ', text).strip()
+                extracted = text[:3000] # Limiter la taille du fallback
+            
+            return {"url": url, "content": extracted}
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
 
 @app.get("/api/git/diff")
-def git_diff():
-    return run_git(["diff", "HEAD"])
+def api_git_diff():
+    """Affiche le diff HEAD."""
+    import subprocess
+    if not MCP_ROOT: return {"error": "Non lié"}
+    res = subprocess.run("git diff HEAD", cwd=str(MCP_ROOT), shell=True, capture_output=True, text=True)
+    return {"stdout": res.stdout, "stderr": res.stderr}
+
+@app.post("/api/git/push")
+async def api_git_push():
+    """Effectue un git push."""
+    import subprocess
+    if not MCP_ROOT: return JSONResponse({"error": "Non lié"}, status_code=400)
+    res = subprocess.run("git push", cwd=str(MCP_ROOT), shell=True, capture_output=True, text=True)
+    return {"ok": res.returncode == 0, "stdout": res.stdout, "stderr": res.stderr}
+
+@app.post("/api/git/pull")
+async def api_git_pull():
+    """Effectue un git pull."""
+    import subprocess
+    if not MCP_ROOT: return JSONResponse({"error": "Non lié"}, status_code=400)
+    res = subprocess.run("git pull", cwd=str(MCP_ROOT), shell=True, capture_output=True, text=True)
+    return {"ok": res.returncode == 0, "stdout": res.stdout, "stderr": res.stderr}
 
 # ─────────────────────────────────────────────
 #  AIDER-STYLE DIFF ENGINE
@@ -2443,6 +2893,53 @@ async def favicon():
     svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">✦</text></svg>'
     from fastapi.responses import Response
     return Response(content=svg, media_type="image/svg+xml")
+
+@app.get("/api/proxy_image")
+async def proxy_image(prompt: Optional[str] = None, seed: Optional[int] = None, model: str = "flux", url: Optional[str] = None, key: Optional[str] = None):
+    import urllib.parse
+    try:
+        # Si on a les paramètres séparés, on construit l'URL proprement ici
+        if prompt:
+            prompt_quoted = urllib.parse.quote(prompt)
+            # Changement d'endpoint vers image.pollinations.ai (plus permissif)
+            clean_url = f"https://image.pollinations.ai/prompt/{prompt_quoted}?width=1024&height=1024&seed={seed or 42}&model={model}&nologo=true"
+            # On ajoute la clé API si elle est fournie
+            if key:
+                clean_url += f"&key={key}"
+        elif url:
+            clean_url = urllib.parse.unquote(url)
+        else:
+            return JSONResponse({"error": "Paramètres manquants"}, status_code=400)
+
+        async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+                "Referer": "https://pollinations.ai/"
+            }
+            resp = await client.get(clean_url, headers=headers)
+            
+            # Détection de redirection vers le site Pollinations (landing page)
+            content_type = resp.headers.get("content-type", "").lower()
+            
+            # Si le contenu n'est pas une image, c'est que Pollinations nous bloque ou nous redirige
+            if "text/html" in content_type or "image" not in content_type:
+                 print(f"DEBUG PROXY: Pollinations a refusé. Content-Type: {content_type}")
+                 print(f"DEBUG PROXY: Début de réponse: {resp.text[:200]}")
+                 return JSONResponse({
+                     "error": "Pollinations a refusé de générer l'image (bot detection). Tentez avec un autre prompt.", 
+                     "status": 403,
+                     "body_preview": resp.text[:200],
+                     "url_finale": str(resp.url)
+                 }, status_code=403)
+            
+            if resp.status_code != 200:
+                return JSONResponse({"error": "Failed to fetch image", "status": resp.status_code}, status_code=resp.status_code)
+            
+            # On renvoie l'image avec son type MIME original
+            return Response(content=resp.content, media_type=content_type)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 @app.get("/", response_class=HTMLResponse)
 async def serve_frontend():

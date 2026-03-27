@@ -138,7 +138,7 @@
       top: 50%;
       transform: translateY(-50%);
       z-index: 5;
-      box-shadow: 0 0 10px rgba(0,0,0,0.5);
+      box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
       backdrop-filter: blur(4px);
       white-space: nowrap;
     }
@@ -1438,7 +1438,11 @@
       justify-content: center;
       padding: 24px;
     }
-    .overlay.open { display: flex; }
+
+    .overlay.open {
+      display: flex;
+    }
+
     .overlay-content {
       background: var(--bg-surface);
       border: 1px solid var(--border);
@@ -1448,10 +1452,22 @@
       max-height: 85vh;
       display: flex;
       flex-direction: column;
-      box-shadow: 0 32px 64px rgba(0,0,0,0.5);
+      box-shadow: 0 32px 64px rgba(0, 0, 0, 0.5);
       animation: modalIn 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     }
-    @keyframes modalIn { from { opacity:0; transform: translateY(20px) scale(0.98); } to { opacity:1; transform: translateY(0) scale(1); } }
+
+    @keyframes modalIn {
+      from {
+        opacity: 0;
+        transform: translateY(20px) scale(0.98);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+    }
+
     .overlay-header {
       padding: 18px 24px;
       border-bottom: 1px solid var(--border);
@@ -1459,25 +1475,117 @@
       align-items: center;
       justify-content: space-between;
     }
-    .overlay-title { font-family: var(--font-display); font-size: 20px; font-weight: 300; letter-spacing: 0.05em; color: var(--gold); }
-    .overlay-body { padding: 24px; overflow-y: auto; flex: 1; }
-    .overlay-footer { padding: 18px 24px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 12px; }
-    
-    .git-status-list { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
-    .git-item { display: flex; align-items: center; gap: 10px; font-size: 11px; font-family: var(--font-mono); color: var(--white-dim); }
-    .git-tag { padding: 2px 6px; border-radius: 4px; font-weight: 600; font-size: 9px; }
-    .git-tag.M { background: #c9a84c22; color: #c9a84c; border: 1px solid #c9a84c44; }
-    .git-tag.A { background: #3fb95022; color: #3fb950; border: 1px solid #3fb95044; }
-    .git-tag.D { background: #f8514922; color: #f85149; border: 1px solid #f8514944; }
-    
-    .diff-container { background: #0d1117; border: 1px solid var(--border); border-radius: 8px; padding: 12px; max-height: 300px; overflow-y: auto; font-family: var(--font-mono); font-size: 11px; white-space: pre-wrap; margin-top: 16px; }
-    .diff-add { color: #3fb950; }
-    .diff-sub { color: #f85149; }
-    
-    .rag-file-item { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: var(--bg-deep); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px; }
-    .rag-file-info { display: flex; align-items: center; gap: 12px; }
-    .rag-file-name { font-size: 12px; color: var(--white); }
-    .rag-file-status { font-size: 10px; color: var(--white-faint); }
+
+    .overlay-title {
+      font-family: var(--font-display);
+      font-size: 20px;
+      font-weight: 300;
+      letter-spacing: 0.05em;
+      color: var(--gold);
+    }
+
+    .overlay-body {
+      padding: 24px;
+      overflow-y: auto;
+      flex: 1;
+    }
+
+    .overlay-footer {
+      padding: 18px 24px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: flex-end;
+      gap: 12px;
+    }
+
+    .git-status-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 16px;
+    }
+
+    .git-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 11px;
+      font-family: var(--font-mono);
+      color: var(--white-dim);
+    }
+
+    .git-tag {
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-weight: 600;
+      font-size: 9px;
+    }
+
+    .git-tag.M {
+      background: #c9a84c22;
+      color: #c9a84c;
+      border: 1px solid #c9a84c44;
+    }
+
+    .git-tag.A {
+      background: #3fb95022;
+      color: #3fb950;
+      border: 1px solid #3fb95044;
+    }
+
+    .git-tag.D {
+      background: #f8514922;
+      color: #f85149;
+      border: 1px solid #f8514944;
+    }
+
+    .diff-container {
+      background: #0d1117;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      max-height: 300px;
+      overflow-y: auto;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      white-space: pre-wrap;
+      margin-top: 16px;
+    }
+
+    .diff-add {
+      color: #3fb950;
+    }
+
+    .diff-sub {
+      color: #f85149;
+    }
+
+    .rag-file-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      background: var(--bg-deep);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-bottom: 8px;
+    }
+
+    .rag-file-info {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .rag-file-name {
+      font-size: 12px;
+      color: var(--white);
+    }
+
+    .rag-file-status {
+      font-size: 10px;
+      color: var(--white-faint);
+    }
 
     .agent-step-badge {
       font-size: 9px;
@@ -2509,6 +2617,21 @@
       color: var(--gold);
     }
 
+    /* Style pour les images générées (Markdown) */
+    .msg-body img {
+      max-width: 100%;
+      border-radius: 12px;
+      margin-top: 12px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+      border: 1px solid var(--border-light);
+      display: block;
+      cursor: zoom-in;
+      transition: transform 0.3s ease;
+    }
+    .msg-body img:hover {
+      transform: scale(1.01);
+    }
+
 
     /* Guide panel */
     #guide-panel {
@@ -3290,7 +3413,8 @@
       flex: 1;
       min-width: 0;
       overflow: hidden;
-      padding-right: 60px; /* Space for the price tag to not overlap text too much */
+      padding-right: 60px;
+      /* Space for the price tag to not overlap text too much */
     }
 
     .model-name-text {
@@ -3439,12 +3563,14 @@
       align-self: flex-start;
       padding-top: 2px;
     }
+
     .stats-grid {
       display: grid;
       grid-template-columns: repeat(2, 1fr);
       gap: 12px;
       margin-top: 10px;
     }
+
     .stat-card {
       background: var(--bg-surface);
       border: 1px solid var(--border);
@@ -3453,13 +3579,51 @@
       text-align: center;
       transition: transform var(--transition);
     }
-    .stat-card:hover { transform: translateY(-2px); border-color: var(--gold-dim); }
-    .stat-label { font-size: 10px; color: var(--white-faint); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 5px; }
-    .stat-value { font-size: 18px; font-weight: 500; color: var(--white); font-family: var(--font-mono); }
-    .stat-card.highlight .stat-value { color: var(--gold); }
-    .stat-card.positive .stat-value { color: #4caf7d; }
-    .stat-sub { font-size: 9px; color: var(--white-faint); margin-top: 4px; }
-    .stats-footer-info { margin-top: 20px; font-size: 11px; color: var(--white-dim); line-height: 1.5; background: var(--bg-raised); padding: 10px; border-radius: 8px; border-left: 3px solid var(--gold); }
+
+    .stat-card:hover {
+      transform: translateY(-2px);
+      border-color: var(--gold-dim);
+    }
+
+    .stat-label {
+      font-size: 10px;
+      color: var(--white-faint);
+      text-transform: uppercase;
+      letter-spacing: .05em;
+      margin-bottom: 5px;
+    }
+
+    .stat-value {
+      font-size: 18px;
+      font-weight: 500;
+      color: var(--white);
+      font-family: var(--font-mono);
+    }
+
+    .stat-card.highlight .stat-value {
+      color: var(--gold);
+    }
+
+    .stat-card.positive .stat-value {
+      color: #4caf7d;
+    }
+
+    .stat-sub {
+      font-size: 9px;
+      color: var(--white-faint);
+      margin-top: 4px;
+    }
+
+    .stats-footer-info {
+      margin-top: 20px;
+      font-size: 11px;
+      color: var(--white-dim);
+      line-height: 1.5;
+      background: var(--bg-raised);
+      padding: 10px;
+      border-radius: 8px;
+      border-left: 3px solid var(--gold);
+    }
   </style>
 </head>
 
@@ -3531,8 +3695,8 @@
               <div class="theme-dot" data-t="emerald"></div>
               <div class="theme-dot" data-t="rose"></div>
             </div>
-            <button class="btn-sm" id="btn-balance">💰 Solde</button>
-            <button class="btn-sm" id="btn-economy" onclick="openEconomyOverlay()">📈 Économie</button>
+            <button class="btn-sm" id="btn-economy" onclick="openEconomyOverlay()"
+              style="flex:1;justify-content:center">📈 Économie & Solde</button>
           </div>
           <div id="token-badge" class="token-badge" style="display:none">
             <div class="dot"></div>
@@ -3699,7 +3863,14 @@
       <div style="display:flex;gap:6px;margin-top:4px;">
         <input type="text" id="mcp-root-input" class="field-input" placeholder="C:\Users\moi\projet"
           style="font-size:11px;" />
+        <button class="btn-sm" id="btn-mcp-browse" title="Parcourir..." onclick="openBrowseModal()">📁</button>
         <button class="btn-sm" id="btn-mcp-set">Lier</button>
+      </div>
+      <div class="field-label" style="margin-top:12px;">Importer depuis GitHub</div>
+      <div style="display:flex;gap:6px;margin-top:4px;">
+        <input type="text" id="mcp-github-url" class="field-input" placeholder="https://github.com/user/repo"
+          style="font-size:11px;" />
+        <button class="btn-sm" id="btn-mcp-clone" onclick="cloneGitRepo()">Cloner</button>
       </div>
       <div id="mcp-root-display" style="font-size:10px;color:var(--white-faint);margin-top:4px;"></div>
     </div>
@@ -3805,18 +3976,20 @@
         <button class="tbtn" onclick="closeRagOverlay()">×</button>
       </div>
       <div id="rag-tabs" style="display:flex; border-bottom:1px solid var(--border)">
-         <button class="tbtn active" onclick="switchRagTab('index')" id="rag-tab-index">Indexation</button>
-         <button class="tbtn" onclick="switchRagTab('search')" id="rag-tab-search">Recherche</button>
+        <button class="tbtn active" onclick="switchRagTab('index')" id="rag-tab-index">Indexation</button>
+        <button class="tbtn" onclick="switchRagTab('search')" id="rag-tab-search">Recherche</button>
       </div>
       <div class="overlay-body">
         <div id="rag-panel-index">
-          <p class="white-faint" style="font-size:11px; margin-bottom:15px">Indexez les fichiers de votre projet pour permettre au Chatbot de les consulter intelligemment.</p>
+          <p class="white-faint" style="font-size:11px; margin-bottom:15px">Indexez les fichiers de votre projet pour
+            permettre au Chatbot de les consulter intelligemment.</p>
           <div id="rag-file-list"></div>
           <button class="btn-new" onclick="indexCurrentProject()">Indexer tout le projet</button>
         </div>
         <div id="rag-panel-search" style="display:none">
           <div class="field-row">
-            <input type="text" id="rag-search-input" class="field-input" placeholder="Chercher dans les fichiers indexés...">
+            <input type="text" id="rag-search-input" class="field-input"
+              placeholder="Chercher dans les fichiers indexés...">
             <button class="btn-sm" onclick="doRagSearch()">Rechercher</button>
           </div>
         </div>
@@ -3851,20 +4024,39 @@
             <div class="stat-value" id="stat-eur">0.00 €</div>
             <div class="stat-sub">Grâce à l'optimisation</div>
           </div>
+          <div class="stat-card" id="stat-balance-card">
+            <div class="stat-label">Solde Restant</div>
+            <div class="stat-value" id="stat-balance">-- €</div>
+            <div class="stat-sub" id="stat-balance-raw">Solde USD : -- $</div>
+          </div>
         </div>
         <div class="stats-footer-info">
-          Les économies proviennent du <strong>Context Trimmer</strong> (troncature intelligente) 
+          Les économies proviennent du <strong>Context Trimmer</strong> (troncature intelligente)
           et du <strong>Caching Ephemeral</strong> (Claude).
         </div>
       </div>
       <div class="overlay-footer">
-        <button class="btn-sm" onclick="resetStats()">Effacer</button>
+        <button class="btn-sm" onclick="checkBalance(event)">🔄 Actualiser Solde</button>
+        <button class="btn-sm" onclick="resetStats()">Effacer Stats</button>
         <button class="btn-new" onclick="closeEconomyOverlay()" style="margin:0">Fermer</button>
       </div>
     </div>
   </div>
-          <div id="rag-results-list" style="margin-top:16px"></div>
+
+  <div id="browse-overlay" class="overlay">
+    <div class="overlay-content" style="max-width: 500px">
+      <div class="overlay-header">
+        <div class="overlay-title">📁 Choisir un dossier</div>
+        <button class="tbtn" onclick="closeBrowseModal()">×</button>
+      </div>
+      <div class="overlay-body">
+        <div id="browse-current-path"
+          style="font-size:10px; color:var(--white-dim); margin-bottom:10px; word-break:break-all;"></div>
+        <div id="browse-list" style="display:flex; flex-direction:column; gap:4px; max-height:400px; overflow-y:auto;">
         </div>
+      </div>
+      <div class="overlay-footer">
+        <button class="btn-new" onclick="confirmBrowseSelection()" style="margin:0">Sélectionner</button>
       </div>
     </div>
   </div>
@@ -3938,6 +4130,7 @@
           if (input) input.value = termHistIdx >= 0 ? termHistory[termHistIdx] : '';
         }
       });
+      on('settings-toggle', 'click', () => toggleSettings());
       on('btn-preview-close', 'click', closePreview);
       on('btn-preview-refresh', 'click', refreshPreview);
       on('tab-preview', 'click', () => switchPreviewTab('preview'));
@@ -3948,8 +4141,6 @@
       on('memory-close', 'click', closeMemoryPanel);
       on('btn-memory-add', 'click', addMemoryItem);
       on('memory-input', 'keydown', e => { if (e.key === 'Enter') { e.preventDefault(); addMemoryItem(); } });
-      on('settings-toggle', 'click', () => toggleSettings());
-      on('btn-balance', 'click', checkBalance);
       on('btn-export', 'click', exportConversation);
       on('btn-clear', 'click', clearChat);
       on('toggle-sidebar', 'click', toggleSidebar);
@@ -4091,7 +4282,34 @@
     function onApiKeyChange() { saveConfig(); clearTimeout(apiKeyReloadTimer); apiKeyReloadTimer = setTimeout(() => { showToast('Rechargement des modèles…'); loadModels(); }, 800); }
 
     // BALANCE
-    async function checkBalance() { const data = await fetch('/api/balance').then(r => r.json()); showToast(data.usage ? 'Consommation : ' + data.usage : (data.error || 'Erreur'), data.error ? 'error' : 'success'); }
+    async function checkBalance(event) {
+      const btn = event?.target;
+      if (btn) btn.textContent = '⌛...';
+      try {
+        const data = await fetch('/api/balance').then(r => r.json());
+        if (data.usage_eur) {
+          const balEl = document.getElementById('stat-balance');
+          const cardEl = document.getElementById('stat-balance-card');
+          balEl.textContent = data.usage_eur;
+          document.getElementById('stat-balance-raw').textContent = 'Solde USD : ' + data.usage;
+          
+          if (data.is_negative) {
+            balEl.style.color = '#f85149';
+            if (cardEl) cardEl.style.borderColor = 'rgba(248, 81, 73, 0.4)';
+          } else {
+            balEl.style.color = 'var(--white)';
+            if (cardEl) cardEl.style.borderColor = 'rgba(255,255,255,0.1)';
+          }
+
+          if (!document.getElementById('economy-overlay').classList.contains('open')) {
+            showToast('Solde : ' + data.usage_eur, data.is_negative ? 'error' : 'success');
+          }
+        } else {
+          showToast(data.error || 'Erreur solde', 'error');
+        }
+      } catch (e) { showToast('Erreur connexion', 'error'); }
+      if (btn) btn.textContent = '🔄 Actualiser Solde';
+    }
 
     // HISTORY
     async function renderHistory() {
@@ -4412,7 +4630,24 @@
       return wrap;
     }
     function appendAiMessage(text) { const el = document.getElementById('messages'), empty = document.getElementById('empty-state'); if (empty) empty.style.display = 'none'; const wrap = createMsgEl('assistant', text); el.appendChild(wrap); scrollToBottom(); return wrap; }
-    function renderMarkdown(text) { try { return marked.parse(text); } catch { return escapeHtml(text); } }
+    function renderMarkdown(text) {
+      if (!text) return '';
+      // Hack : transformer IMAGE_GENERATED: url en markdown d'image si brut
+      let processed = text.replace(/Analyse en cours\.\.\.[\s\n\r]*/g, '');
+      if (!processed.trim() && text.includes('Analyse en cours...')) return '';
+      if (text.includes('IMAGE_GENERATED:')) {
+        processed = text.replace(/IMAGE_GENERATED:\s*(\/?https?:\/\/\S+|(?:\/api\/proxy_image\?\S+))/g, (match, url) => {
+          const cleanUrl = url.split(/[\s\n<>]/)[0];
+          // On retire le lien <a> pour éviter la redirection sauvage vers le site de Pollinations
+          return `<div class="generated-image-container" style="margin: 10px 0; border-radius: 12px; overflow: hidden; max-width: 512px; box-shadow: 0 4px 15px rgba(0,0,0,0.3); background: #1a1a1a; min-height: 200px; display: flex; align-items: center; justify-content: center;">
+                    <img src="${cleanUrl}" alt="Generated Image" referrerpolicy="no-referrer" 
+                         style="width: 100%; height: auto; display: block;"
+                         onerror="this.parentElement.innerHTML='<div style=padding:20px;color:var(--white-dim)>⚠️ Échec du chargement de l\\'image (Pollinations bloque peut-être l\\'accès)</div>'">
+                  </div>`;
+        });
+      }
+      try { return marked.parse(processed); } catch { return escapeHtml(processed); }
+    }
     function wrapCodeBlocks(container) {
       container.querySelectorAll('pre code').forEach(codeEl => {
         const pre = codeEl.parentElement; if (pre.parentElement?.classList.contains('code-block-wrapper')) return;
@@ -4879,20 +5114,35 @@
         const r = await fetch('/api/mcp/ls?path=' + encodeURIComponent(path)).then(x => x.json());
         if (r.error) { tree.innerHTML = '<div style="color:#f85149;padding:8px">' + r.error + '</div>'; return; }
         tree.innerHTML = '';
+
+        // Bouton Retour si on n'est pas à la racine
+        if (path !== '.' && path !== '') {
+          const parentPath = path.includes('/') ? path.split('/').slice(0, -1).join('/') : '.';
+          const backRow = document.createElement('div');
+          backRow.style.cssText = 'display:flex;align-items:center;gap:6px;padding:4px 6px;border-radius:4px;cursor:pointer;color:var(--gold);font-weight:bold;';
+          backRow.innerHTML = '⬅ <span>..</span>';
+          backRow.onclick = () => renderMcpTree(parentPath || '.');
+          tree.appendChild(backRow);
+        }
+
         r.entries.forEach(e => {
           const row = document.createElement('div');
           row.style.cssText = 'display:flex;align-items:center;gap:6px;padding:4px 6px;border-radius:4px;cursor:pointer;color:var(--white-dim);transition:background .15s;';
           row.innerHTML = (e.type === 'dir' ? '📁' : '📄') + ' <span style="flex:1">' + e.name + '</span>' + (e.size != null ? '<span style="font-size:10px;color:var(--white-faint)">' + formatSize(e.size) + '</span>' : '');
           row.addEventListener('mouseenter', () => row.style.background = 'var(--bg-hover)');
           row.addEventListener('mouseleave', () => row.style.background = '');
-          if (e.type === 'file') {
-            row.addEventListener('click', async () => {
-              const filePath = (path === '.' ? '' : path + '/') + e.name;
-              const fr = await fetch('/api/mcp/read?path=' + encodeURIComponent(filePath)).then(x => x.json());
+
+          const fullPath = (path === '.' ? '' : path + '/') + e.name;
+
+          if (e.type === 'dir') {
+            row.onclick = () => renderMcpTree(fullPath);
+          } else {
+            row.onclick = async () => {
+              const fr = await fetch('/api/mcp/read?path=' + encodeURIComponent(fullPath)).then(x => x.json());
               if (fr.error) { showToast(fr.error, 'error'); return; }
               addToContext({ type: 'text', name: e.name, text: fr.content, size: fr.content.length });
               closeMcpPanel();
-            });
+            };
           }
           tree.appendChild(row);
         });
@@ -5627,12 +5877,21 @@
 
     const AGENT_TOOLS = {
       web_search: {
-        desc: 'Recherche sur le web',
+        desc: 'Recherche sur le web (snippets)',
         icon: '🔍',
         async run(query) {
           const r = await fetch('/api/search?q=' + encodeURIComponent(query));
           const d = await r.json();
           return d.results.map((x, i) => (i + 1) + '. ' + x.title + '\n' + x.snippet).join('\n\n');
+        }
+      },
+      read_url: {
+        desc: 'Lire le contenu complet d\'une page web (URL)',
+        icon: '📖',
+        async run(url) {
+          const r = await fetch('/api/mcp/fetch?url=' + encodeURIComponent(url));
+          const d = await r.json();
+          return d.content || d.error || 'Erreur inconnue';
         }
       },
       read_context_file: {
@@ -5712,6 +5971,24 @@
           return d.ok ? 'Commit réussi' : d.stderr || d.error;
         }
       },
+      git_push: {
+        desc: 'Pousser les changements vers le dépôt distant',
+        icon: '📤',
+        async run() {
+          const r = await fetch('/api/git/push', { method: 'POST' });
+          const d = await r.json();
+          return d.ok ? 'Push réussi' : (d.stderr || d.error || 'Erreur push');
+        }
+      },
+      git_pull: {
+        desc: 'Récupérer les changements depuis le dépôt distant',
+        icon: '📥',
+        async run() {
+          const r = await fetch('/api/git/pull', { method: 'POST' });
+          const d = await r.json();
+          return d.ok ? 'Pull réussi' : (d.stderr || d.error || 'Erreur pull');
+        }
+      },
       rag_search: {
         desc: 'Chercher dans le code indexé (RAG)',
         icon: '🔎',
@@ -5734,6 +6011,7 @@
     function appendAgentStep(container, toolName, text, status = 'running') {
       const config = {
         web_search: { label: 'Analyzed', name: 'Web Search', icon: '🔍' },
+        read_url: { label: 'Read', name: 'Web Page', icon: '📖' },
         read_file: { label: 'Analyzed', name: 'File Content', icon: '📄' },
         write_file: { label: 'Edited', name: 'File Change', icon: '💾' },
         apply_diff: { label: 'Edited', name: 'Code Patch', icon: '✂️' },
@@ -5819,9 +6097,14 @@
                 if (steps.length) {
                   const last = steps[steps.length - 1];
                   last.classList.add('done');
-                  // On récupère l'icone originale pour la garder SI running
-                  const tool = last.dataset.tool;
                   last.querySelector('.agent-step-icon').textContent = '✓';
+                }
+                // Si l'IA est silencieuse après un tool, on force l'affichage du résultat
+                if (d.full && d.tool === 'generate_image') {
+                  if (thinkEl.parentNode) thinkEl.remove();
+                  raw += (raw ? '\n\n' : '') + d.full;
+                  bodyEl.innerHTML = renderMarkdown(raw) + '<span class="cursor"></span>';
+                  scrollToBottom();
                 }
               }
 
@@ -5979,7 +6262,7 @@
       refreshGitStatus();
     }
     function closeGitOverlay() { document.getElementById('git-overlay').classList.remove('open'); }
-    
+
     async function refreshGitStatus() {
       const r = await fetch('/api/git/status');
       const d = await r.json();
@@ -6054,7 +6337,56 @@
     let ragFiles = [];
     function openRagOverlay() { document.getElementById('rag-overlay').classList.add('open'); }
     function closeRagOverlay() { document.getElementById('rag-overlay').classList.remove('open'); }
-    
+
+    // --- GITHUB CLONE ---
+    async function cloneGitRepo() {
+      const url = document.getElementById('mcp-github-url').value;
+      if (!url) return showToast('Entrez une URL GitHub', 'error');
+      showToast('Clonage en cours...', 'info');
+      const r = await fetch('/api/git/clone', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url })
+      });
+      const d = await r.json();
+      if (d.ok) {
+        showToast('Projet cloné et lié !', 'success');
+        document.getElementById('mcp-root-input').value = d.path;
+        await setMcpRoot();
+      } else {
+        showToast('Erreur: ' + d.error, 'error');
+      }
+    }
+
+    // --- BROWSE ---
+    let currentBrowsePath = '';
+    function openBrowseModal() {
+      document.getElementById('browse-overlay').classList.add('open');
+      browseToPath('');
+    }
+    function closeBrowseModal() { document.getElementById('browse-overlay').classList.remove('open'); }
+    async function browseToPath(path) {
+      const r = await fetch('/api/mcp/browse?path=' + encodeURIComponent(path));
+      const d = await r.json();
+      if (d.error) return showToast(d.error, 'error');
+      currentBrowsePath = d.current;
+      document.getElementById('browse-current-path').textContent = d.current;
+      const list = document.getElementById('browse-list');
+      list.innerHTML = '';
+      d.entries.forEach(e => {
+        const div = document.createElement('div');
+        div.className = 'hist-item';
+        div.style.padding = '6px 10px';
+        div.innerHTML = `<span style="font-size:14px">${e.is_parent ? '⬆' : '📁'}</span> <span style="font-size:12px">${e.name}</span>`;
+        div.onclick = () => browseToPath(e.path);
+        list.appendChild(div);
+      });
+    }
+    function confirmBrowseSelection() {
+      document.getElementById('mcp-root-input').value = currentBrowsePath;
+      closeBrowseModal();
+    }
+
     function switchRagTab(tab) {
       document.getElementById('rag-tab-index').classList.toggle('active', tab === 'index');
       document.getElementById('rag-tab-search').classList.toggle('active', tab === 'search');
@@ -6064,12 +6396,12 @@
 
     async function indexCurrentProject() {
       showToast('Indexation en cours...', 'info');
-      // On demande au backend via MCP (mcp_ls) la liste des fichiers ou on hardcode pour tester
-      // Pour l'instant on indexe main.py et index.html
+      // On demande une indexation complète au backend. 
+      // Si MCP_ROOT est défini, il indexera tout le dossier MCP.
       const r = await fetch('/api/rag/index', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ paths: ['main.py', 'index.html'] })
+        body: JSON.stringify({ paths: [], all: true })
       });
       const d = await r.json();
       showToast(`Indexé: ${d.files} fichiers, ${d.chunks} chunks`, 'success');
@@ -6147,7 +6479,10 @@
         document.getElementById('stat-received').textContent = (d.tokens_received || 0).toLocaleString();
         document.getElementById('stat-saved').textContent = ((d.tokens_saved_trimmer || 0) + (d.tokens_cached || 0)).toLocaleString();
         document.getElementById('stat-eur').textContent = (d.estimated_eur_saved || 0).toFixed(2) + ' €';
-      } catch(e) { console.error(e); }
+        
+        // Charger aussi le solde via la fonction unifiée
+        checkBalance();
+      } catch (e) { console.error(e); }
     }
     function closeEconomyOverlay() { document.getElementById('economy-overlay').classList.remove('open'); }
     async function resetStats() {
