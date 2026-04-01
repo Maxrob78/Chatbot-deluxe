@@ -2,6 +2,7 @@ import json
 import os
 import base64
 import io
+import asyncio
 from datetime import datetime
 from fastapi import FastAPI, Request, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, Response
@@ -26,6 +27,25 @@ def get_current_date_info() -> str:
     days = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
     months = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"]
     return f"Nous sommes actuellement le {days[now.weekday()]} {now.day} {months[now.month-1]} {now.year}. Heure : {now.strftime('%H:%M')}."
+
+async def run_command_async(command: str, cwd: str = None) -> dict:
+    """Exécute une commande shell de manière asynchrone."""
+    try:
+        process = await asyncio.create_subprocess_shell(
+            command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(cwd) if cwd else str(_BASE_DIR)
+        )
+        stdout, stderr = await process.communicate()
+        return {
+            "ok": process.returncode == 0,
+            "stdout": stdout.decode(encoding="utf-8", errors="replace"),
+            "stderr": stderr.decode(encoding="utf-8", errors="replace"),
+            "returncode": process.returncode
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 # ─────────────────────────────────────────────
 #  CONFIG
@@ -193,27 +213,24 @@ def trim_history(messages: list) -> list:
 # ─────────────────────────────────────────────
 #  BUSINESS LOGIC (Git, MCP, RAG)
 # ─────────────────────────────────────────────
-def run_git(args_git: list) -> dict:
-    try:
-        res = subprocess.run(["git"] + args_git, capture_output=True, text=True, cwd=str(_BASE_DIR), encoding="utf-8", errors="replace")
-        return {"ok": res.returncode == 0, "stdout": res.stdout, "stderr": res.stderr, "code": res.returncode}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
+async def run_git(args_git: list) -> dict:
+    cmd = f"git {' '.join(args_git)}"
+    return await run_command_async(cmd, cwd=_BASE_DIR)
 
-def git_status_logic():
+async def git_status_logic():
     if not (_BASE_DIR / ".git").exists():
         return {"ok": False, "not_repo": True}
-    res = run_git(["status", "--porcelain"])
-    branch = run_git(["rev-parse", "--abbrev-ref", "HEAD"])
+    res = await run_git(["status", "--porcelain"])
+    branch = await run_git(["rev-parse", "--abbrev-ref", "HEAD"])
     return {
         "ok": res["ok"], 
         "status": res["stdout"], 
         "branch": branch["stdout"].strip() if branch["ok"] else "???"
     }
 
-def git_commit_logic(message: str):
-    run_git(["add", "."])
-    return run_git(["commit", "-m", message])
+async def git_commit_logic(message: str):
+    await run_git(["add", "."])
+    return await run_git(["commit", "-m", f'"{message}"'])
 
 def mcp_ls_logic(path: str = "."):
     if not MCP_ROOT:
@@ -1153,26 +1170,85 @@ def extract_skeleton(file_path: pathlib.Path) -> str:
         return f"(Erreur d'extraction: {str(e)})"
 
 def apply_aider_diff(content: str, patch: str) -> str:
-    """Applique un patch au format SEARCH/REPLACE (Aider style)."""
+    """
+    Applique un patch au format SEARCH/REPLACE (Aider style) avec "Fuzzy Matching".
+    Gère les différences d'indentation et les espaces de fin de ligne.
+    """
     import re
-    # Extraction des blocs SEARCH/REPLACE
-    # Format: <<<<<<< SEARCH\n(vieux code)\n=======\n(nouveau code)\n>>>>>>> REPLACE
-    pattern = r"<<<<<<< SEARCH\n(.*?)\n=======\n(.*?)\n>>>>>>> REPLACE"
+    
+    # 1. Extraction des blocs
+    pattern = r"<<<<<<< SEARCH\n([\s\S]*?)\n=======\n([\s\S]*?)\n>>>>>>> REPLACE"
     blocks = re.findall(pattern, patch, re.DOTALL)
     if not blocks:
         return content
 
     new_content = content
-    for search, replace in blocks:
-        if search in new_content:
-            new_content = new_content.replace(search, replace, 1)
-        else:
-            # Tentative de match plus souple (sans espaces de fin si besoin)
-            s_clean = search.strip()
-            if s_clean in new_content:
-                new_content = new_content.replace(s_clean, replace, 1)
-            else:
-                raise Exception(f"Bloc SEARCH introuvable dans le fichier : {search[:100]}...")
+    
+    for search_text, replace_text in blocks:
+        # --- STRATÉGIE 1 : Match Exact (Le plus rapide) ---
+        if search_text in new_content:
+            new_content = new_content.replace(search_text, replace_text, 1)
+            continue
+
+        # --- STRATÉGIE 2 : Match "Simple" (Sans espaces de fin de ligne) ---
+        def strip_trailing(text):
+            return "\n".join(line.rstrip() for line in text.splitlines())
+            
+        search_stripped = strip_trailing(search_text)
+        content_lines = new_content.splitlines()
+        search_lines = search_text.splitlines()
+        
+        found_idx = -1
+        # Recherche par fenêtre glissante sur les lignes du fichier
+        for i in range(len(content_lines) - len(search_lines) + 1):
+            window = "\n".join(line.rstrip() for line in content_lines[i:i+len(search_lines)])
+            if window == search_stripped:
+                found_idx = i
+                break
+        
+        if found_idx != -1:
+            content_lines[found_idx : found_idx + len(search_lines)] = replace_text.splitlines()
+            new_content = "\n".join(content_lines)
+            continue
+
+        # --- STRATÉGIE 3 : Match "Fuzzy Indentation" (Décalage de blocs) ---
+        def get_indent(line):
+            return len(line) - len(line.lstrip())
+            
+        search_lines_trim = [l.strip() for l in search_lines]
+        search_content_only = "\n".join(search_lines_trim)
+        
+        found_idx = -1
+        detected_indent_diff = 0
+        
+        for i in range(len(content_lines) - len(search_lines) + 1):
+            window_trim = [l.strip() for l in content_lines[i:i+len(search_lines)]]
+            if "\n".join(window_trim) == search_content_only:
+                for j in range(len(search_lines)):
+                    if search_lines[j].strip():
+                        detected_indent_diff = get_indent(content_lines[i+j]) - get_indent(search_lines[j])
+                        break
+                found_idx = i
+                break
+        
+        if found_idx != -1:
+            replace_lines = replace_text.splitlines()
+            adjusted_replace = []
+            for r_line in replace_lines:
+                if not r_line.strip():
+                    adjusted_replace.append("")
+                else:
+                    target_indent = max(0, get_indent(r_line) + detected_indent_diff)
+                    adjusted_replace.append(" " * target_indent + r_line.lstrip())
+            
+            content_lines[found_idx : found_idx + len(search_lines)] = adjusted_replace
+            new_content = "\n".join(content_lines)
+            continue
+
+        # --- ÉCHEC ---
+        context_preview = search_text.strip()[:100] + "..." if len(search_text) > 100 else search_text.strip()
+        raise Exception(f"Bloc SEARCH introuvable dans le fichier.\nExtrait cherché : '{context_preview}'")
+        
     return new_content
 
 
@@ -1292,25 +1368,16 @@ async def execute_transaction(changes: list, commit_message: str, run_tests_cmd:
 
     # --- PHASE 5 : TESTS (optionnel) ---
     if not rollback_needed and run_tests_cmd:
-        try:
-            import subprocess
-            test_result = subprocess.run(
-                run_tests_cmd, cwd=str(MCP_ROOT), shell=True,
-                capture_output=True, text=True, timeout=60
-            )
-            if test_result.returncode != 0:
-                rollback_needed = True
-                return {
-                    "ok": False,
-                    "results": results,
-                    "rollback": True,
-                    "error": f"Tests échoués — rollback déclenché.\n{test_result.stdout}\n{test_result.stderr}",
-                    "test_output": (test_result.stdout + test_result.stderr).strip()
-                }
-        except Exception as e:
+        res_test = await run_command_async(run_tests_cmd, cwd=MCP_ROOT)
+        if not res_test["ok"]:
             rollback_needed = True
-            return {"ok": False, "results": results, "rollback": True,
-                    "error": f"Erreur lors de l'exécution des tests : {e}"}
+            return {
+                "ok": False,
+                "results": results,
+                "rollback": True,
+                "error": f"Tests échoués — rollback déclenché.\n{res_test['stdout']}\n{res_test['stderr']}",
+                "test_output": (res_test['stdout'] + res_test['stderr']).strip()
+            }
 
     # --- ROLLBACK (si besoin) ---
     if rollback_needed:
@@ -1345,22 +1412,15 @@ async def execute_transaction(changes: list, commit_message: str, run_tests_cmd:
     commit_output = ""
     is_git_repo = (MCP_ROOT / ".git").exists()
     if is_git_repo:
-        try:
-            import subprocess
-            # git add de TOUS les fichiers modifiés
-            files_to_add = " ".join(f'"{p}"' for p in new_contents.keys())
-            subprocess.run(f"git add {files_to_add}", cwd=str(MCP_ROOT), shell=True, check=True)
-            commit_res = subprocess.run(
-                f'git commit -m "{commit_message}"',
-                cwd=str(MCP_ROOT), shell=True, capture_output=True, text=True
-            )
-            if commit_res.returncode == 0:
-                committed = True
-                commit_output = commit_res.stdout.strip()
-            else:
-                commit_output = commit_res.stderr.strip()
-        except Exception as e:
-            commit_output = str(e)
+        # git add de TOUS les fichiers modifiés
+        files_to_add = " ".join(f'"{p}"' for p in new_contents.keys())
+        await run_command_async(f"git add {files_to_add}", cwd=MCP_ROOT)
+        res_c = await run_command_async(f'git commit -m "{commit_message}"', cwd=MCP_ROOT)
+        if res_c["ok"]:
+            committed = True
+            commit_output = res_c["stdout"].strip()
+        else:
+            commit_output = res_c["stderr"].strip()
 
     return {
         "ok": True,
@@ -1776,19 +1836,8 @@ async def execute_tool(name: str, args: dict) -> str:
         elif name == "run_git":
             if not MCP_ROOT: return "Erreur : aucun dossier MCP configuré."
             git_args = args.get("args","status")
-            import subprocess
-            try:
-                # On lance Git dans le dossier MCP_ROOT
-                res = subprocess.run(
-                    f"git {git_args}", 
-                    cwd=str(MCP_ROOT), 
-                    shell=True, capture_output=True, text=True, encoding="utf-8"
-                )
-                out = res.stdout if res.stdout else ""
-                err = res.stderr if res.stderr else ""
-                return (out + "\n" + err).strip() or "(commande exécutée, pas de sortie)"
-            except Exception as e:
-                return f"Erreur Git : {str(e)}"
+            res = await run_command_async(f"git {git_args}", cwd=MCP_ROOT)
+            return (res["stdout"] + "\n" + res["stderr"]).strip() or "(commande exécutée, pas de sortie)"
                         
         elif name == "run_tests":
             if not MCP_ROOT: return "Erreur : aucun dossier MCP configuré."
