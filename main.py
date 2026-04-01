@@ -1175,6 +1175,203 @@ def apply_aider_diff(content: str, patch: str) -> str:
                 raise Exception(f"Bloc SEARCH introuvable dans le fichier : {search[:100]}...")
     return new_content
 
+
+# ─────────────────────────────────────────────
+#  TRANSACTION MULTI-FICHIERS ATOMIQUE
+# ─────────────────────────────────────────────
+async def execute_transaction(changes: list, commit_message: str, run_tests_cmd: str = "") -> dict:
+    """
+    Applique une liste de changements multi-fichiers de manière atomique.
+    En cas d'erreur (syntaxe ou tests), effectue un rollback Git automatique.
+
+    Args:
+        changes: Liste de dicts avec 'path' et soit 'diff' (SEARCH/REPLACE),
+                 soit 'content' (écriture complète).
+        commit_message: Message du commit Git si tout réussit.
+        run_tests_cmd: Commande de tests optionnelle à exécuter avant le commit.
+
+    Returns:
+        dict avec 'ok' (bool), 'committed' (bool), 'results' (log par fichier),
+        'error' (si échec), 'rollback' (bool).
+    """
+    if not MCP_ROOT:
+        return {"ok": False, "error": "Aucun dossier MCP configuré."}
+    if not changes:
+        return {"ok": False, "error": "Aucun changement fourni."}
+
+    results = []
+    rollback_needed = False
+    original_contents: dict[str, str] = {}  # Sauvegarde en mémoire pour rollback
+
+    # --- PHASE 1 : SNAPSHOT (Sauvegarde en mémoire des fichiers originaux) ---
+    for change in changes:
+        path = change.get("path", "")
+        if not path:
+            results.append({"ok": False, "path": "?", "error": "Chemin manquant."})
+            rollback_needed = True
+            break
+        target = (MCP_ROOT / path).resolve()
+        if not str(target).startswith(str(MCP_ROOT)):
+            results.append({"ok": False, "path": path, "error": "Accès refusé hors du dossier MCP."})
+            rollback_needed = True
+            break
+        # Lire le contenu actuel seulement si le fichier existe (pas pour les nouveaux fichiers)
+        if target.is_file():
+            try:
+                original_contents[path] = target.read_text(encoding="utf-8")
+            except Exception as e:
+                results.append({"ok": False, "path": path, "error": f"Lecture impossible : {e}"})
+                rollback_needed = True
+                break
+        else:
+            original_contents[path] = None  # Nouveau fichier
+
+    if rollback_needed:
+        return {"ok": False, "results": results, "rollback": False, "error": "Échec lors de la phase de snapshot."}
+
+    # --- PHASE 2 : APPLICATION (Tous les changements en mémoire d'abord) ---
+    new_contents: dict[str, str] = {}
+    for change in changes:
+        path = change.get("path", "")
+        target = (MCP_ROOT / path).resolve()
+        diff = change.get("diff", "")
+        content_full = change.get("content", "")
+
+        try:
+            if diff:
+                # Mode SEARCH/REPLACE
+                if original_contents.get(path) is None:
+                    raise Exception(f"Impossible d'appliquer un diff sur un fichier inexistant : {path}")
+                new_text = apply_aider_diff(original_contents[path], diff)
+            elif content_full is not None and content_full != "":
+                # Mode écriture complète
+                new_text = content_full
+            else:
+                raise Exception("Ni 'diff' ni 'content' fourni pour ce changement.")
+
+            new_contents[path] = new_text
+            results.append({"ok": True, "path": path, "action": "diff" if diff else "write"})
+        except Exception as e:
+            results.append({"ok": False, "path": path, "error": str(e)})
+            rollback_needed = True
+            break
+
+    if rollback_needed:
+        return {"ok": False, "results": results, "rollback": False,
+                "error": "Échec lors de la phase d'application des diffs (aucun fichier modifié sur disque)."}
+
+    # --- PHASE 3 : ÉCRITURE SUR DISQUE ---
+    written_paths = []
+    for path, new_text in new_contents.items():
+        target = (MCP_ROOT / path).resolve()
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(new_text, encoding="utf-8")
+            written_paths.append(path)
+        except Exception as e:
+            # Mettre à jour le résultat de ce fichier
+            for r in results:
+                if r.get("path") == path:
+                    r["ok"] = False
+                    r["error"] = f"Erreur écriture disque : {e}"
+            rollback_needed = True
+            break
+
+    # --- PHASE 4 : VALIDATION SYNTAXIQUE ---
+    if not rollback_needed:
+        for path in written_paths:
+            target = (MCP_ROOT / path).resolve()
+            syntax_error = validate_code_syntax(target)
+            if syntax_error:
+                for r in results:
+                    if r.get("path") == path:
+                        r["ok"] = False
+                        r["syntax_error"] = syntax_error
+                rollback_needed = True
+                break
+
+    # --- PHASE 5 : TESTS (optionnel) ---
+    if not rollback_needed and run_tests_cmd:
+        try:
+            import subprocess
+            test_result = subprocess.run(
+                run_tests_cmd, cwd=str(MCP_ROOT), shell=True,
+                capture_output=True, text=True, timeout=60
+            )
+            if test_result.returncode != 0:
+                rollback_needed = True
+                return {
+                    "ok": False,
+                    "results": results,
+                    "rollback": True,
+                    "error": f"Tests échoués — rollback déclenché.\n{test_result.stdout}\n{test_result.stderr}",
+                    "test_output": (test_result.stdout + test_result.stderr).strip()
+                }
+        except Exception as e:
+            rollback_needed = True
+            return {"ok": False, "results": results, "rollback": True,
+                    "error": f"Erreur lors de l'exécution des tests : {e}"}
+
+    # --- ROLLBACK (si besoin) ---
+    if rollback_needed:
+        restored = []
+        for path, original_text in original_contents.items():
+            target = (MCP_ROOT / path).resolve()
+            try:
+                if original_text is None:
+                    # Fichier créé par la transaction → on l'efface
+                    if target.exists():
+                        target.unlink()
+                    restored.append(f"{path} (supprimé — nouveau fichier)")
+                else:
+                    target.write_text(original_text, encoding="utf-8")
+                    restored.append(path)
+            except Exception as e:
+                restored.append(f"{path} (ERREUR RESTORE: {e})")
+
+        syntax_errors = [r.get("syntax_error") for r in results if r.get("syntax_error")]
+        error_detail = "; ".join(r.get("error", "") for r in results if not r.get("ok") and r.get("error"))
+        return {
+            "ok": False,
+            "results": results,
+            "rollback": True,
+            "restored_files": restored,
+            "error": f"Transaction annulée — rollback effectué. Détail : {error_detail}",
+            "syntax_errors": syntax_errors,
+        }
+
+    # --- PHASE 6 : COMMIT GIT ATOMIQUE ---
+    committed = False
+    commit_output = ""
+    is_git_repo = (MCP_ROOT / ".git").exists()
+    if is_git_repo:
+        try:
+            import subprocess
+            # git add de TOUS les fichiers modifiés
+            files_to_add = " ".join(f'"{p}"' for p in new_contents.keys())
+            subprocess.run(f"git add {files_to_add}", cwd=str(MCP_ROOT), shell=True, check=True)
+            commit_res = subprocess.run(
+                f'git commit -m "{commit_message}"',
+                cwd=str(MCP_ROOT), shell=True, capture_output=True, text=True
+            )
+            if commit_res.returncode == 0:
+                committed = True
+                commit_output = commit_res.stdout.strip()
+            else:
+                commit_output = commit_res.stderr.strip()
+        except Exception as e:
+            commit_output = str(e)
+
+    return {
+        "ok": True,
+        "results": results,
+        "rollback": False,
+        "committed": committed,
+        "commit_message": commit_message,
+        "commit_output": commit_output,
+        "files_changed": len(new_contents),
+    }
+
 AGENT_TOOLS_SCHEMA = [
     {
         "type": "function",
@@ -1386,6 +1583,45 @@ AGENT_TOOLS_SCHEMA = [
                     "prompt": {"type": "string", "description": "Description ultra-détaillée de l'image (en anglais de préférence pour une meilleure qualité)."}
                 },
                 "required": ["prompt"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "apply_multi_diff",
+            "description": (
+                "Applique des modifications sur PLUSIEURS fichiers en une seule transaction atomique. "
+                "Si un seul fichier échoue (syntaxe invalide ou tests échoués), TOUS les fichiers sont "
+                "restaurés automatiquement (rollback). Si tout réussit, un commit Git est créé. "
+                "UTILISER EN PRIORITÉ pour toute refactorisation impliquant 2 fichiers ou plus."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "changes": {
+                        "type": "array",
+                        "description": "Liste des modifications à appliquer.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "path": {"type": "string", "description": "Chemin relatif du fichier depuis la racine MCP."},
+                                "diff":    {"type": "string", "description": "Blocs SEARCH/REPLACE à appliquer (format Aider). Utiliser si le fichier existe déjà."},
+                                "content": {"type": "string", "description": "Contenu complet à écrire (pour les nouveaux fichiers ou réécriture totale)."}
+                            },
+                            "required": ["path"]
+                        }
+                    },
+                    "commit_message": {
+                        "type": "string",
+                        "description": "Message du commit Git (format conventionnel recommandé : 'feat: ...', 'fix: ...', 'refactor: ...')."
+                    },
+                    "run_tests": {
+                        "type": "string",
+                        "description": "Optionnel: commande de tests à lancer avant le commit (ex: 'pytest', 'npm test'). La transaction est annulée si les tests échouent."
+                    }
+                },
+                "required": ["changes", "commit_message"]
             }
         }
     }
@@ -1699,6 +1935,52 @@ async def execute_tool(name: str, args: dict) -> str:
                     output += f"--- FICHIER: {r['path']} (score: {r['score']:.2f}) ---\n{r['text']}\n"
             return output
 
+        elif name == "apply_multi_diff":
+            changes        = args.get("changes", [])
+            commit_message = args.get("commit_message", "chore: modifications automatiques via agent")
+            run_tests_cmd  = args.get("run_tests", "")
+
+            if not changes:
+                return "Erreur : la liste 'changes' est vide."
+
+            result = await execute_transaction(changes, commit_message, run_tests_cmd)
+
+            # Formatter un rapport lisible pour l'IA
+            lines = []
+            status = "✅ TRANSACTION RÉUSSIE" if result["ok"] else "❌ TRANSACTION ANNULÉE (rollback)"
+            lines.append(status)
+            lines.append(f"Fichiers traités : {result.get('files_changed', len(changes))}")
+
+            if result.get("committed"):
+                lines.append(f"✅ Commit Git créé : '{result['commit_message']}'")
+                lines.append(f"   {result.get('commit_output', '')}")
+            elif result.get("ok") and not result.get("committed"):
+                lines.append("ℹ️ Pas de repo Git détecté — fichiers écrits sans commit.")
+
+            lines.append("")
+            lines.append("Détail par fichier :")
+            for r in result.get("results", []):
+                icon = "✅" if r.get("ok") else "❌"
+                action = r.get("action", "?")
+                path   = r.get("path", "?")
+                err    = r.get("error", r.get("syntax_error", ""))
+                lines.append(f"  {icon} [{action}] {path}" + (f" — {err}" if err else ""))
+
+            if result.get("rollback"):
+                lines.append("")
+                lines.append(f"⚠️ Cause du rollback : {result.get('error', '')}")
+                restored = result.get("restored_files", [])
+                if restored:
+                    lines.append(f"   Fichiers restaurés : {', '.join(restored)}")
+                if result.get("syntax_errors"):
+                    lines.append("   Erreurs syntaxe détectées :")
+                    for se in result["syntax_errors"]:
+                        lines.append(f"   → {se}")
+                lines.append("")
+                lines.append("ACTION REQUISE : Analyse les erreurs ci-dessus et corrige ta stratégie avant de relancer apply_multi_diff.")
+
+            return "\n".join(lines)
+
         else:
             return f"Outil inconnu : {name}"
     except Exception as e:
@@ -1838,6 +2120,8 @@ async def agent_endpoint(req: Request):
     async def agent_stream():
         nonlocal agent_messages
         iteration = 0
+        raw_full = "" # Accumulateur pour le contenu riche (images/tools)
+        full_saved_messages = messages.copy() # Mémoire de sauvegarde finale
 
         # Détecter si le modèle supporte le function calling
         # On essaie d'abord avec tools, si erreur on bascule en mode texte
@@ -1988,6 +2272,7 @@ async def agent_endpoint(req: Request):
                                 tool_result = await execute_tool(fn_name, fn_args)
                                 print(f"[AGENT] {fn_name} → {len(tool_result)} chars")
                                 yield f"data: {json.dumps({'tool_result': True, 'tool': fn_name, 'preview': tool_result[:100], 'full': tool_result})}\n\n"
+                                raw_full += (tool_result + "\n\n")
                                 
                                 # --- HOOK ANTI-ABANDON (Post-Search) ---
                                 # Si après recherche l'IA dit qu'elle ne trouve rien ou demande une source
@@ -2028,9 +2313,10 @@ async def agent_endpoint(req: Request):
                                     chunk = str(chunk) + " "
                                 yield f"data: {json.dumps({'delta': chunk})}\n\n"
                                 await asyncio.sleep(0.008)
-                            messages.append({"role":"assistant","content":final_text})
-                            upsert_conversation(session_id, model, messages)
-                            yield f"data: {json.dumps({'done': True, 'tokens': estimate_tokens(messages)})}\n\n"
+                            # Sauvegarde finale avec tout l'historique accumulé
+                            full_saved_messages.append({"role":"assistant","content":raw_full + final_text})
+                            upsert_conversation(session_id, model, full_saved_messages)
+                            yield f"data: {json.dumps({'done': True, 'tokens': estimate_tokens(full_saved_messages)})}\n\n"
                             return
 
                     else:
@@ -2141,9 +2427,9 @@ async def agent_endpoint(req: Request):
                         
                         # Réponse finale en fallback
                         new_assistant_content = full_text
-                        messages.append({"role":"assistant","content":new_assistant_content})
-                        upsert_conversation(session_id, model, messages)
-                        yield f"data: {json.dumps({'done': True, 'tokens': estimate_tokens(messages)})}\n\n"
+                        full_saved_messages.append({"role":"assistant","content":raw_full + new_assistant_content})
+                        upsert_conversation(session_id, model, full_saved_messages)
+                        yield f"data: {json.dumps({'done': True, 'tokens': estimate_tokens(full_saved_messages)})}\n\n"
                         return
             except Exception as e:
                 yield f"data: {json.dumps({'error': str(e)})}\n\n"
@@ -2895,50 +3181,52 @@ async def favicon():
     return Response(content=svg, media_type="image/svg+xml")
 
 @app.get("/api/proxy_image")
-async def proxy_image(prompt: Optional[str] = None, seed: Optional[int] = None, model: str = "flux", url: Optional[str] = None, key: Optional[str] = None):
+async def proxy_image(req: Request):
     import urllib.parse
+    import re
+    import traceback
+    
     try:
-        # Si on a les paramètres séparés, on construit l'URL proprement ici
+        # 1. Récupération dynamique (zéro risque d'erreur d'import comme Optional)
+        prompt = req.query_params.get("prompt")
+        url_param = req.query_params.get("url")
+        seed = req.query_params.get("seed", "42")
+        model = req.query_params.get("model", "flux")
+        
+        # 2. Construction de l'URL ultra-propre
         if prompt:
             prompt_quoted = urllib.parse.quote(prompt)
-            # Changement d'endpoint vers image.pollinations.ai (plus permissif)
-            clean_url = f"https://image.pollinations.ai/prompt/{prompt_quoted}?width=1024&height=1024&seed={seed or 42}&model={model}&nologo=true"
-            # On ajoute la clé API si elle est fournie
-            if key:
-                clean_url += f"&key={key}"
-        elif url:
-            clean_url = urllib.parse.unquote(url)
+            clean_url = f"https://image.pollinations.ai/prompt/{prompt_quoted}?width=1024&height=1024&seed={seed}&model={model}&nologo=true"
+        elif url_param:
+            clean_url = urllib.parse.unquote(url_param)
+            clean_url = re.sub(r"&key=[^&]*", "", clean_url)
         else:
             return JSONResponse({"error": "Paramètres manquants"}, status_code=400)
 
-        async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
+        print(f"[PROXY] Téléchargement de l'image ({model})...")
+
+        # 3. Appel à Pollinations
+        async with httpx.AsyncClient(follow_redirects=True, timeout=45.0) as client:
             headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
-                "Referer": "https://pollinations.ai/"
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
             }
             resp = await client.get(clean_url, headers=headers)
             
-            # Détection de redirection vers le site Pollinations (landing page)
             content_type = resp.headers.get("content-type", "").lower()
             
-            # Si le contenu n'est pas une image, c'est que Pollinations nous bloque ou nous redirige
-            if "text/html" in content_type or "image" not in content_type:
-                 print(f"DEBUG PROXY: Pollinations a refusé. Content-Type: {content_type}")
-                 print(f"DEBUG PROXY: Début de réponse: {resp.text[:200]}")
-                 return JSONResponse({
-                     "error": "Pollinations a refusé de générer l'image (bot detection). Tentez avec un autre prompt.", 
-                     "status": 403,
-                     "body_preview": resp.text[:200],
-                     "url_finale": str(resp.url)
-                 }, status_code=403)
+            # 4. Détection du blocage par Cloudflare / Anti-bot
+            if "text/html" in content_type or "application/json" in content_type:
+                 print(f"[PROXY ERROR] Requête bloquée par Pollinations. Content-Type reçu : {content_type}")
+                 return JSONResponse({"error": "Bloqué par l'API"}, status_code=403)
             
-            if resp.status_code != 200:
-                return JSONResponse({"error": "Failed to fetch image", "status": resp.status_code}, status_code=resp.status_code)
-            
-            # On renvoie l'image avec son type MIME original
+            from fastapi.responses import Response
+            print("[PROXY] Image récupérée avec succès !")
             return Response(content=resp.content, media_type=content_type)
+            
     except Exception as e:
+        # 5. Affichage brutal de l'erreur dans ton terminal noir si ça plante
+        print(f"\n[PROXY ERREUR FATALE]")
+        traceback.print_exc()
         return JSONResponse({"error": str(e)}, status_code=500)
 
 @app.get("/", response_class=HTMLResponse)

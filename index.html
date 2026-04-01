@@ -6124,6 +6124,12 @@
                   messages.push({ role: 'assistant', content: raw });
                   updateTokenBadge(d.tokens || null);
                   generateTitle();
+                  // Sauvegarder la conversation sur le serveur (important pour le mode agent !)
+                  fetch('/api/history', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id: sessionId, messages, model: document.getElementById('model-select').value })
+                  });
                   renderHistory();
                 }
               }
