@@ -14,9 +14,50 @@ import trafilatura
 import subprocess
 import pathlib
 import math
-from collections import Counter
 import uuid
 from typing import List, Dict, Any, Optional
+import logging
+from collections import deque
+
+# ─────────────────────────────────────────────
+#  GLOBAL STATE — AUTO-HEALING
+# ─────────────────────────────────────────────
+# Garde les 5 dernières erreurs critiques en mémoire
+LOG_ERROR_BUFFER = deque(maxlen=5)
+# Liste des connexions SSE (Server-Sent Events) pour notifier le frontend
+EVENT_QUEUES: List[asyncio.Queue] = []
+
+class AutoHealingLogHandler(logging.Handler):
+    """Handler personnalisé qui capture les erreurs critiques et les envoie au frontend."""
+    def emit(self, record):
+        try:
+            if record.levelno >= logging.ERROR:
+                msg = self.format(record)
+                # On capture surtout les tracebacks s'ils existent
+                traceback_data = ""
+                if record.exc_info:
+                    import traceback
+                    traceback_data = "".join(traceback.format_exception(*record.exc_info))
+                
+                error_event = {
+                    "type": "CRASH",
+                    "timestamp": datetime.now().isoformat(),
+                    "message": record.getMessage(),
+                    "traceback": traceback_data or msg,
+                    "level": record.levelname
+                }
+                LOG_ERROR_BUFFER.append(error_event)
+                # Notifier tous les clients connectés
+                for q in EVENT_QUEUES:
+                    asyncio.create_task(q.put(error_event))
+        except Exception:
+            pass
+
+# Configuration globale du logging
+log_handler = AutoHealingLogHandler()
+log_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+logging.getLogger().addHandler(log_handler)
+logging.getLogger("uvicorn.error").addHandler(log_handler)
 
 # ─────────────────────────────────────────────
 #  HELPERS — DATE
@@ -2087,7 +2128,7 @@ def try_extract_tools(text: str) -> list[dict]:
     # On cherche le nom de l'outil suivi immédiatement d'une accolade ouvrante
     tool_names = ["web_search", "read_url", "read_file", "write_file", "list_files", "search_project", "run_python", "run_shell", "apply_diff", "run_git", "rag_index", "rag_search", "run_tests"]
     for tn in tool_names:
-        # Regex qui cherche le nom de l'outil puis { jusqu'à } balancé (approximatif) ou fin de bloc JSON
+        # Regex qui cherche le nom de l'outil puis { jusqu'à } balancé (approximatif) ou fin de
         # Format: web_search{"query":"..."}
         json_pattern = rf"{tn}\s*(\{{\s*\".*?\".*?\}})"
         m_json = re.search(json_pattern, text, re.DOTALL)
@@ -2129,6 +2170,25 @@ async def agent_endpoint(req: Request):
     # Contexte MCP
     if MCP_ROOT:
         full_system += f"\n\n[MCP Filesystem actif — racine : {MCP_ROOT}]\nTu peux lire/écrire des fichiers via les outils disponibles."
+    # Proactive RAG (Local Code Context)
+    if _RAG_INDEX and messages:
+        last_txt = ""
+        last_msg = messages[-1]
+        if last_msg.get("role") == "user":
+            c = last_msg.get("content", "")
+            last_txt = " ".join(b.get("text", "") for b in c if b.get("type") == "text") if isinstance(c, list) else str(c)
+        
+        if last_txt:
+            rag_res = rag_search_internal(last_txt, limit=5)
+            if rag_res and rag_res.get("results"):
+                rag_context = "\n\n[CONTEXTE PROJET (RAG PROACTIF) :]\n"
+                rag_context += "Voici les morceaux de code les plus pertinents trouvés dans le projet pour ta tâche :\n"
+                for r in rag_res["results"]:
+                    if r["score"] > 0:
+                        rag_context += f"--- FICHIER: {r['path']} ---\n{r['text']}\n"
+                rag_context += "\nUtilise ces informations pour agir plus vite sans avoir à chercher manuellement si possible."
+                full_system += rag_context
+
     # Instructions Outils WEB & Autonomie
     full_system += (
         "\n\n[MODE AGENT ACTIVÉ]\n"
@@ -2489,6 +2549,37 @@ async def agent_endpoint(req: Request):
 # ─────────────────────────────────────────────
 #  ROUTES — BALANCE
 # ─────────────────────────────────────────────
+# ─────────────────────────────────────────────
+#  ROUTES — AUTO-HEALING & LOGS
+# ─────────────────────────────────────────────
+@app.get("/api/events")
+async def events_stream(req: Request):
+    """Canal SSE pour envoyer les alertes de crash au frontend."""
+    async def event_generator():
+        q = asyncio.Queue()
+        EVENT_QUEUES.append(q)
+        try:
+            while True:
+                # Vérifier si le client est toujours là
+                if await req.is_disconnected():
+                    break
+                try:
+                    # Attendre un event avec un timeout pour envoyer un heartbeat
+                    event = await asyncio.wait_for(q.get(), timeout=20.0)
+                    yield f"data: {json.dumps(event)}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": ping\n\n" # Heartbeat SSE
+        finally:
+            if q in EVENT_QUEUES:
+                EVENT_QUEUES.remove(q)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+@app.get("/api/logs/recent")
+async def get_recent_logs():
+    """Retourne les dernières erreurs capturées."""
+    return {"errors": list(LOG_ERROR_BUFFER)}
+
 @app.get("/api/balance")
 async def get_balance():
     cfg = load_config()

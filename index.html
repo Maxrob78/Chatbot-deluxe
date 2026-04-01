@@ -1301,26 +1301,43 @@
     /* Toast */
     #toast {
       position: fixed;
-      bottom: 90px;
+      bottom: 24px;
       right: 24px;
       background: var(--bg-raised);
       border: 1px solid var(--border);
       border-radius: var(--radius);
-      padding: 10px 16px;
+      padding: 12px 16px;
       font-size: 12px;
-      color: var(--white-dim);
-      z-index: 100;
+      color: var(--white);
+      z-index: 9999;
       opacity: 0;
-      transform: translateY(8px);
-      transition: all .25s ease;
+      transform: translateY(12px);
+      transition: all .3s cubic-bezier(.4, 0, .2, 1);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 280px;
+      max-width: 450px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.5);
       pointer-events: none;
-      max-width: 280px;
     }
-
-    #toast.show {
-      opacity: 1;
-      transform: translateY(0);
+    #toast.show { opacity: 1; transform: translateY(0); pointer-events: auto; }
+    #toast span { flex: 1; }
+    .toast-btn {
+      background: var(--gold);
+      color: var(--bg-deep);
+      border: none;
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all .2s;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      flex-shrink: 0;
     }
+    .toast-btn:hover { background: var(--white); transform: scale(1.05); }
 
     #toast.error {
       border-color: #5a2020;
@@ -4167,8 +4184,29 @@
       await loadMemory();
       loadGuide();
       renderHistory();
+      updateTokenBadge();
 
-      // ── Écouter les messages de la console iframe ──
+      // ── AUTO-HEALING : Écouteur d'événements serveur (SSE) ──
+      const eventSource = new EventSource('/api/events');
+      eventSource.onmessage = (e) => {
+        try {
+          const data = JSON.parse(e.data);
+          if (data.type === 'CRASH') {
+            const crashMsg = `💥 CRASH DÉTECTÉ : ${data.message}`;
+            showToast(crashMsg, 'error', 15000, "RÉPARER 🛠️", () => {
+              const input = document.getElementById('chat-input');
+              if (input) {
+                input.value = `[AUTO-HEALING] J'ai détecté un crash dans le serveur. Voici le traceback :\n\n\`\`\`python\n${data.traceback}\n\`\`\`\n\nAnalyse l'erreur, identifie le fichier source et applique un correctif définitif. n'oublie pas de vérifier avec run_tests.`;
+                input.style.height = '120px';
+                // Activer mode agent
+                agentMode = true; 
+                document.getElementById('btn-agent-mode')?.classList.add('active');
+                sendMessage();
+              }
+            });
+          }
+        } catch(err) { console.error("SSE Error:", err); }
+      };
       window.addEventListener('message', e => {
         if (e.data && e.data.type === 'console') {
           addConsoleEntry(e.data.level || 'log', e.data.args || '', e.data.source || '');
@@ -4937,7 +4975,20 @@
     function toggleSidebar() { const sb = document.getElementById('sidebar'), btn = document.getElementById('toggle-sidebar'); sb.classList.toggle('collapsed'); btn.textContent = sb.classList.contains('collapsed') ? '▶' : '◀'; }
     function exportConversation() { if (!messages.length) { showToast('Aucune conversation à exporter', 'error'); return; } const md = messages.map(m => '**' + m.role.toUpperCase() + '**\n' + getContentText(m.content)).join('\n\n---\n\n'); const a = document.createElement('a'); a.href = 'data:text/markdown;charset=utf-8,' + encodeURIComponent(md); a.download = 'conversation-' + new Date().toISOString().slice(0, 10) + '.md'; a.click(); }
     let toastTimer;
-    function showToast(msg, type = '') { const el = document.getElementById('toast'); el.textContent = msg; el.className = 'show ' + type; clearTimeout(toastTimer); toastTimer = setTimeout(() => { el.className = ''; }, 3500); }
+    function showToast(msg, type = '', duration = 3500, btnText = null, btnAction = null) {
+      const el = document.getElementById('toast');
+      el.innerHTML = `<span>${msg}</span>`;
+      if (btnText && btnAction) {
+        const btn = document.createElement('button');
+        btn.textContent = btnText;
+        btn.className = 'toast-btn';
+        btn.onclick = (e) => { e.stopPropagation(); btnAction(); el.className = ''; };
+        el.appendChild(btn);
+      }
+      el.className = 'show ' + type;
+      clearTimeout(toastTimer);
+      if (duration > 0) toastTimer = setTimeout(() => { el.className = ''; }, duration);
+    }
 
     // MODEL GUIDE (dynamique depuis /api/guide)
     const TAG_LABELS = { free: 'Gratuit', fast: 'Rapide', smart: 'Puissant', vision: 'Vision', long: 'Long ctx' };
