@@ -8,7 +8,7 @@
 
 | Caractéristique | 🌐 Abonnement Claude/GPT (20€) | 💎 Ton Chatbot Deluxe |
 | :--- | :--- | :--- |
-| **Cerveau** | **Un seul modèle** (lock-in) | **Multi-Modèles** (GPT-4o, Claude 3.5, Gemini Pro, Llama 3) |
+| **Cerveau** | **Un seul modèle** (lock-in) | **Multi-Modèles** (GPT-5.4, Claude 4.6, Gemini 3.1 Pro, DeepSeek R1) |
 | **Logic (Agent)** | **Simple Chat** (Questions/Réponses) | **Mode Agentique** (15 itérations de réflexion / action) |
 | **Fichiers** | **Upload manuel** (limité) | **MCP (Full Access)** (Accès direct à tout ton Repo) |
 | **Système** | **Isolé** (Aucun accès local) | **Natif (OS Interactor)** (Pilote tes Apps, ton CMD/PS, ton Git) |
