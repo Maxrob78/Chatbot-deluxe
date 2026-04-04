@@ -1318,11 +1318,20 @@
       gap: 12px;
       min-width: 280px;
       max-width: 450px;
-      box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
       pointer-events: none;
     }
-    #toast.show { opacity: 1; transform: translateY(0); pointer-events: auto; }
-    #toast span { flex: 1; }
+
+    #toast.show {
+      opacity: 1;
+      transform: translateY(0);
+      pointer-events: auto;
+    }
+
+    #toast span {
+      flex: 1;
+    }
+
     .toast-btn {
       background: var(--gold);
       color: var(--bg-deep);
@@ -1337,7 +1346,11 @@
       letter-spacing: 0.05em;
       flex-shrink: 0;
     }
-    .toast-btn:hover { background: var(--white); transform: scale(1.05); }
+
+    .toast-btn:hover {
+      background: var(--white);
+      transform: scale(1.05);
+    }
 
     #toast.error {
       border-color: #5a2020;
@@ -1389,6 +1402,62 @@
       cursor: pointer;
       transition: all var(--transition);
       user-select: none;
+    }
+
+    #git-tabs .tbtn {
+      flex: 1;
+      padding: 10px;
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      color: var(--white-dim);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      cursor: pointer;
+      transition: all .3s;
+    }
+
+    #git-tabs .tbtn.active {
+      color: var(--gold);
+      border-bottom-color: var(--gold);
+      background: rgba(212, 175, 55, 0.05);
+    }
+
+    .git-item {
+      padding: 10px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      transition: background .2s;
+    }
+
+    .git-item:hover {
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .git-tag {
+      font-size: 10px;
+      font-weight: bold;
+      padding: 2px 4px;
+      border-radius: 3px;
+      font-family: var(--font-mono);
+    }
+
+    .git-tag.M {
+      color: #e2b93d;
+      background: rgba(226, 185, 61, 0.1);
+    }
+
+    .git-tag.A {
+      color: #3fb950;
+      background: rgba(63, 185, 80, 0.1);
+    }
+
+    .git-tag.D {
+      color: #f85149;
+      background: rgba(248, 81, 73, 0.1);
     }
 
     .file-handle-badge:hover {
@@ -2645,6 +2714,7 @@
       cursor: zoom-in;
       transition: transform 0.3s ease;
     }
+
     .msg-body img:hover {
       transform: scale(1.01);
     }
@@ -2724,6 +2794,7 @@
       user-select: none;
       -webkit-user-select: none;
       transition: background var(--transition);
+      border-radius: var(--radius-lg);
     }
 
     .guide-cat-header:hover {
@@ -2777,6 +2848,8 @@
       max-height: 300px;
       overflow-y: auto;
       padding-bottom: 6px;
+      border-bottom-left-radius: 16px;
+      border-bottom-right-radius: 16px;
     }
 
     .guide-category.expanded .guide-models {
@@ -3336,6 +3409,28 @@
       box-shadow: 0 0 12px rgba(200, 60, 60, .2);
     }
 
+    .btn-git-open {
+      width: 40px;
+      height: 40px;
+      background: var(--bg-raised);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--gold);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      transition: all var(--transition);
+      flex-shrink: 0;
+    }
+
+    .btn-git-open:hover {
+      border-color: var(--gold-dim);
+      background: var(--bg-surface);
+      box-shadow: 0 0 10px var(--gold-glow);
+    }
+
     /* Themes */
     [data-theme="sapphire"] {
       --gold: #5b9cf6;
@@ -3641,6 +3736,345 @@
       border-radius: 8px;
       border-left: 3px solid var(--gold);
     }
+
+    /* ─── BATTLE MODE ─── */
+    #battle-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      background: var(--bg-void);
+      display: flex;
+      flex-direction: column;
+      transform: translateY(100%);
+      transition: transform .35s cubic-bezier(.4, 0, .2, 1);
+    }
+
+    #battle-overlay.open {
+      transform: translateY(0);
+    }
+
+    .battle-header {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 14px 24px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-deep);
+      flex-shrink: 0;
+    }
+
+    .battle-title {
+      font-family: var(--font-display);
+      font-size: 20px;
+      font-weight: 300;
+      letter-spacing: .06em;
+      color: var(--white);
+      flex: 1;
+    }
+
+    .battle-title span {
+      color: var(--gold);
+    }
+
+    .battle-models {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .battle-model-select {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-light);
+      border-radius: 8px;
+      color: var(--white);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      padding: 6px 10px;
+      outline: none;
+      cursor: pointer;
+      max-width: 200px;
+      transition: border-color var(--transition);
+    }
+
+    .battle-model-select:focus {
+      border-color: var(--gold-dim);
+    }
+
+    .battle-vs {
+      font-size: 13px;
+      color: var(--gold);
+      font-weight: 600;
+      letter-spacing: .1em;
+      text-shadow: 0 0 12px var(--gold-glow);
+    }
+
+    .battle-arena {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .battle-col {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .battle-col.left {
+      border-right: 1px solid var(--border);
+    }
+
+    .battle-col-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 20px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-deep);
+      flex-shrink: 0;
+    }
+
+    .battle-badge {
+      padding: 3px 10px;
+      border-radius: 12px;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .battle-badge.left {
+      background: rgba(99, 179, 237, .15);
+      border: 1px solid rgba(99, 179, 237, .4);
+      color: #63b3ed;
+    }
+
+    .battle-badge.right {
+      background: rgba(252, 129, 74, .15);
+      border: 1px solid rgba(252, 129, 74, .4);
+      color: #fc814a;
+    }
+
+    .battle-model-name {
+      font-size: 11px;
+      color: var(--white-dim);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      flex: 1;
+    }
+
+    .battle-tokens {
+      font-size: 10px;
+      color: var(--white-faint);
+      flex-shrink: 0;
+    }
+
+    .battle-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 22px 28px;
+      font-size: 13.5px;
+      line-height: 1.7;
+      position: relative;
+    }
+
+    .battle-thinking {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--white-faint);
+      font-size: 12px;
+      padding: 20px 0;
+    }
+
+    .battle-thinking-dots {
+      display: flex;
+      gap: 4px;
+    }
+
+    .battle-thinking-dots span {
+      width: 6px;
+      height: 6px;
+      background: var(--gold);
+      border-radius: 50%;
+      animation: battle-dot 1.2s ease-in-out infinite;
+      opacity: .3;
+    }
+
+    .battle-thinking-dots span:nth-child(2) {
+      animation-delay: .2s;
+    }
+
+    .battle-thinking-dots span:nth-child(3) {
+      animation-delay: .4s;
+    }
+
+    @keyframes battle-dot {
+      50% {
+        opacity: 1;
+        transform: translateY(-2px);
+      }
+    }
+
+    .battle-divider {
+      width: 2px;
+      background: linear-gradient(to bottom, transparent, var(--gold-dim), transparent);
+      flex-shrink: 0;
+      opacity: 0.5;
+    }
+
+    .battle-input-row {
+      display: flex;
+      gap: 10px;
+      padding: 14px 24px;
+      border-top: 1px solid var(--border);
+      background: var(--bg-deep);
+      flex-shrink: 0;
+      align-items: flex-end;
+    }
+
+    .battle-textarea {
+      flex: 1;
+      background: var(--bg-raised);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      color: var(--white);
+      font-family: var(--font-mono);
+      font-size: 13px;
+      padding: 10px 14px;
+      outline: none;
+      resize: none;
+      min-height: 44px;
+      max-height: 120px;
+      transition: border-color var(--transition);
+      line-height: 1.5;
+    }
+
+    .battle-textarea:focus {
+      border-color: var(--gold-dim);
+    }
+
+    .battle-textarea::placeholder {
+      color: var(--white-faint);
+    }
+
+    .battle-send {
+      padding: 10px 22px;
+      background: linear-gradient(135deg, var(--gold-dim), var(--gold));
+      border: none;
+      border-radius: 10px;
+      color: #000;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: .08em;
+      cursor: pointer;
+      transition: all var(--transition);
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .battle-send:hover {
+      filter: brightness(1.15);
+      box-shadow: 0 0 18px var(--gold-glow);
+    }
+
+    .battle-send:disabled {
+      opacity: .5;
+      cursor: not-allowed;
+      filter: none;
+    }
+
+    /* Zone de vote */
+    .battle-vote {
+      display: none;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 24px;
+      background: var(--bg-raised);
+      border-top: 1px solid var(--border);
+      flex-shrink: 0;
+      flex-wrap: wrap;
+    }
+
+    .battle-vote.visible {
+      display: flex;
+    }
+
+    .battle-vote-label {
+      font-size: 11px;
+      color: var(--white-faint);
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      flex-shrink: 0;
+    }
+
+    .battle-vote-btn {
+      padding: 7px 16px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--white-dim);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      cursor: pointer;
+      transition: all var(--transition);
+    }
+
+    .battle-vote-btn.left-win:hover {
+      border-color: #63b3ed;
+      color: #63b3ed;
+      background: rgba(99, 179, 237, .08);
+    }
+
+    .battle-vote-btn.right-win:hover {
+      border-color: #fc814a;
+      color: #fc814a;
+      background: rgba(252, 129, 74, .08);
+    }
+
+    .battle-vote-btn.tie:hover {
+      border-color: var(--gold);
+      color: var(--gold);
+      background: var(--gold-glow2);
+    }
+
+    .battle-vote-btn.selected {
+      font-weight: 600;
+    }
+
+    .battle-scoreboard {
+      margin-left: auto;
+      font-size: 10px;
+      color: var(--white-faint);
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .battle-score-item {
+      display: flex;
+      gap: 4px;
+      align-items: center;
+    }
+
+    .battle-score-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+
+    .battle-score-dot.left {
+      background: #63b3ed;
+    }
+
+    .battle-score-dot.right {
+      background: #fc814a;
+    }
   </style>
 </head>
 
@@ -3660,7 +4094,12 @@
         </div>
         <div class="settings-body" id="settings-body">
           <div>
-            <div class="field-label">Clé API</div>
+            <div class="field-label">Configuration</div>
+            <div class="field-row">
+              <button class="btn-sm" id="btn-mcp-setup" onclick="openMcpPanel()" style="width:100%">📁 Lier un dossier
+                projet (MCP)</button>
+            </div>
+            <div class="field-label" style="margin-top:10px">Mémoire</div>
             <input type="password" id="api-key" class="field-input" placeholder="sk-or-…" />
           </div>
           <div style="position:relative">
@@ -3742,7 +4181,6 @@
             <span class="icon">📚</span>
             <span>RAG</span>
           </button>
-          <!-- Git button removed as per user request (useless for user, only for IA) -->
           <div class="tbtn-sep"></div>
           <button class="tbtn" id="btn-guide" title="Guide des modèles">◧ Guide</button>
           <button class="tbtn" id="btn-memory" title="Mémoire persistante">◈ Mémoire <span class="btn-memory-count"
@@ -3753,9 +4191,11 @@
               id="ctx-badge"></span></button>
           <button class="tbtn" id="btn-presets" title="Prompt presets">⚡ Presets</button>
           <div class="tbtn-sep"></div>
+          <button class="tbtn" id="btn-battle" onclick="toggleBattle()"
+            title="Mode Battle — comparer deux modèles côte à côte">⚔️ Battle</button>
           <button class="tbtn" id="btn-agent-mode" title="Mode agent — l'IA enchaîne les appels automatiquement">⚙
             Agent</button>
-          <button class="tbtn" id="btn-mcp" title="MCP Filesystem">⊡ MCP</button>
+          <button class="tbtn" id="btn-mcp" title="MCP Filesystem" style="display:none">⊡ MCP</button>
           <button class="tbtn" id="btn-terminal" title="Terminal (Ctrl+T)">▸ Terminal</button>
           <div class="tbtn-sep"></div>
           <button class="tbtn tbtn-danger" id="btn-clear" title="Vider le chat">⊘ Vider</button>
@@ -3779,11 +4219,83 @@
             onchange="handleFiles(this.files)" />
           <textarea id="chat-input" rows="1" placeholder="Écrivez votre message… (Ctrl+V pour coller une image)"
             onkeydown="handleKeydown(event)" oninput="autoResize(this)" onpaste="handlePaste(event)"></textarea>
+          <button class="btn-git-open" id="btn-git-open" title="Gestion Git" onclick="openGitOverlay()"
+            style="display:none">🌿</button>
           <button class="btn-send" id="btn-send" title="Envoyer (Entrée)">▶</button>
           <button class="btn-stop" id="btn-stop" title="Arrêter (Échap)" style="display:none">■</button>
         </div>
       </div>
     </main>
+
+    <!-- BATTLE OVERLAY -->
+    <div id="battle-overlay">
+      <div class="battle-header">
+        <div class="battle-title">⚔️ Mode <span>Battle</span></div>
+        <div class="battle-models">
+          <select class="battle-model-select" id="battle-model-left">
+            <option>Chargement...</option>
+          </select>
+          <div class="battle-vs">VS</div>
+          <select class="battle-model-select" id="battle-model-right">
+            <option>Chargement...</option>
+          </select>
+        </div>
+        <button class="tbtn" id="btn-battle-close" onclick="toggleBattle()"
+          style="margin-left:12px;font-size:16px;padding:5px 12px">×</button>
+      </div>
+
+      <div class="battle-arena">
+        <!-- COLONNE GAUCHE -->
+        <div class="battle-col left">
+          <div class="battle-col-header">
+            <div class="battle-badge left">A</div>
+            <div class="battle-model-name" id="battle-name-left">—</div>
+            <div class="battle-tokens" id="battle-tokens-left"></div>
+          </div>
+          <div class="battle-body" id="battle-body-left">
+            <div class="battle-thinking" id="battle-think-left" style="display:none">
+              <div class="battle-thinking-dots"><span></span><span></span><span></span></div>
+              En attente de la réponse...
+            </div>
+          </div>
+        </div>
+
+        <div class="battle-divider"></div>
+
+        <!-- COLONNE DROITE -->
+        <div class="battle-col right">
+          <div class="battle-col-header">
+            <div class="battle-badge right">B</div>
+            <div class="battle-model-name" id="battle-name-right">—</div>
+            <div class="battle-tokens" id="battle-tokens-right"></div>
+          </div>
+          <div class="battle-body" id="battle-body-right">
+            <div class="battle-thinking" id="battle-think-right" style="display:none">
+              <div class="battle-thinking-dots"><span></span><span></span><span></span></div>
+              En attente de la réponse...
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- VOTE -->
+      <div class="battle-vote" id="battle-vote">
+        <span class="battle-vote-label">🏆 Qui a le mieux répondu ?</span>
+        <button class="battle-vote-btn left-win" id="vote-left" onclick="voteBattle('left')">👈 A est meilleur</button>
+        <button class="battle-vote-btn tie" id="vote-tie" onclick="voteBattle('tie')">🤝 Égalité</button>
+        <button class="battle-vote-btn right-win" id="vote-right" onclick="voteBattle('right')">👉 B est
+          meilleur</button>
+        <div class="battle-scoreboard" id="battle-scoreboard"></div>
+      </div>
+
+      <!-- INPUT -->
+      <div class="battle-input-row">
+        <textarea class="battle-textarea" id="battle-input"
+          placeholder="Posez votre question aux deux modèles… (Entrée pour envoyer)" onkeydown="handleBattleKey(event)"
+          oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,120)+'px'"></textarea>
+        <button class="battle-send" id="battle-send-btn" onclick="sendBattleMessage()">⚔️ Combat !</button>
+      </div>
+    </div>
 
     <!-- PREVIEW PANEL -->
     <div id="preview-panel">
@@ -3960,22 +4472,33 @@
         <div class="overlay-title">Gestion Git</div>
         <button class="tbtn" onclick="closeGitOverlay()">×</button>
       </div>
+      <div id="git-tabs" style="display:flex; border-bottom:1px solid var(--border)">
+        <button class="tbtn active" onclick="switchGitTab('status')" id="git-tab-status">Status & Commit</button>
+        <button class="tbtn" onclick="switchGitTab('history')" id="git-tab-history">Historique</button>
+      </div>
       <div class="overlay-body">
-        <div id="git-not-repo" style="display:none">
-          <p>Ce dossier n'est pas un dépôt Git.</p>
-          <button class="btn-new" onclick="initGit()">Initialiser Git</button>
+        <div id="git-panel-status">
+          <div id="git-not-repo" style="display:none">
+            <p>Ce dossier n'est pas un dépôt Git.</p>
+            <button class="btn-new" onclick="initGit()">Initialiser Git</button>
+          </div>
+          <div id="git-repo-info">
+            <div style="display:flex; justify-content:space-between; align-items:center">
+              <div id="git-branch-badge" class="token-badge">Branch: <span id="git-branch-name">...</span></div>
+              <button class="btn-sm" onclick="refreshGitStatus()">Rafraîchir</button>
+            </div>
+            <div class="git-status-list" id="git-status-list"></div>
+            <div id="git-diff-view" class="diff-container" style="display:none"></div>
+            <div style="margin-top:20px">
+              <div class="field-label">Message de commit</div>
+              <input type="text" id="git-commit-msg" class="field-input" placeholder="Fix: describe changes...">
+            </div>
+          </div>
         </div>
-        <div id="git-repo-info">
-          <div style="display:flex; justify-content:space-between; align-items:center">
-            <div id="git-branch-badge" class="token-badge">Branch: <span id="git-branch-name">...</span></div>
-            <button class="btn-sm" onclick="refreshGitStatus()">Rafraîchir</button>
-          </div>
-          <div class="git-status-list" id="git-status-list"></div>
-          <div id="git-diff-view" class="diff-container" style="display:none"></div>
-          <div style="margin-top:20px">
-            <div class="field-label">Message de commit</div>
-            <input type="text" id="git-commit-msg" class="field-input" placeholder="Fix: describe changes...">
-          </div>
+        <div id="git-panel-history" style="display:none">
+          <div id="git-history-list" class="git-status-list"></div>
+          <div id="git-history-diff" class="diff-container"
+            style="display:none; margin-top:15px; max-height:300px; overflow-y:auto"></div>
         </div>
       </div>
       <div class="overlay-footer">
@@ -4108,6 +4631,9 @@
       on('btn-mcp', 'click', openMcpPanel);
       on('mcp-close', 'click', closeMcpPanel);
       on('btn-mcp-set', 'click', setMcpRoot);
+
+      // Auto-check MCP status without opening the panel to update button visibility
+      loadMcpRoot(true);
       on('presets-close', 'click', closePresetsPanel);
       on('btn-add-preset', 'click', () => editPreset(-1));
       on('btn-terminal', 'click', toggleTerminal);
@@ -4199,13 +4725,13 @@
                 input.value = `[AUTO-HEALING] J'ai détecté un crash dans le serveur. Voici le traceback :\n\n\`\`\`python\n${data.traceback}\n\`\`\`\n\nAnalyse l'erreur, identifie le fichier source et applique un correctif définitif. n'oublie pas de vérifier avec run_tests.`;
                 input.style.height = '120px';
                 // Activer mode agent
-                agentMode = true; 
+                agentMode = true;
                 document.getElementById('btn-agent-mode')?.classList.add('active');
                 sendMessage();
               }
             });
           }
-        } catch(err) { console.error("SSE Error:", err); }
+        } catch (err) { console.error("SSE Error:", err); }
       };
       window.addEventListener('message', e => {
         if (e.data && e.data.type === 'console') {
@@ -4330,7 +4856,7 @@
           const cardEl = document.getElementById('stat-balance-card');
           balEl.textContent = data.usage_eur;
           document.getElementById('stat-balance-raw').textContent = 'Solde USD : ' + data.usage;
-          
+
           if (data.is_negative) {
             balEl.style.color = '#f85149';
             if (cardEl) cardEl.style.borderColor = 'rgba(248, 81, 73, 0.4)';
@@ -5120,18 +5646,30 @@
     function openMcpPanel() { loadMcpRoot(); document.getElementById('mcp-panel').classList.add('open'); }
     function closeMcpPanel() { document.getElementById('mcp-panel').classList.remove('open'); }
 
-    async function loadMcpRoot() {
-      const r = await fetch('/api/mcp/root').then(x => x.json());
-      mcpRoot = r.root;
-      const disp = document.getElementById('mcp-root-display');
-      const inp = document.getElementById('mcp-root-input');
-      if (mcpRoot) {
-        if (disp) disp.textContent = '✓ Lié : ' + mcpRoot;
-        if (inp) inp.value = mcpRoot;
-        renderMcpTree('.');
-      } else {
-        if (disp) disp.textContent = 'Aucun dossier configuré';
-      }
+    async function loadMcpRoot(silent = false) {
+      try {
+        const r = await fetch('/api/mcp/root').then(x => x.json());
+        mcpRoot = r.root;
+        const disp = document.getElementById('mcp-root-display');
+        const inp = document.getElementById('mcp-root-input');
+        const btnMcp = document.getElementById('btn-mcp');
+        const btnGit = document.getElementById('btn-git-open');
+        const btnSetup = document.getElementById('btn-mcp-setup');
+
+        if (mcpRoot) {
+          if (disp) disp.textContent = '✓ Lié : ' + mcpRoot;
+          if (inp) inp.value = mcpRoot;
+          if (btnMcp) btnMcp.style.display = '';
+          if (btnGit) btnGit.style.display = '';
+          if (btnSetup) btnSetup.textContent = '📁 Dossier lié (Modifier)';
+          if (!silent) renderMcpTree('.');
+        } else {
+          if (disp) disp.textContent = 'Aucun dossier configuré';
+          if (btnMcp) btnMcp.style.display = 'none';
+          if (btnGit) btnGit.style.display = 'none';
+          if (btnSetup) btnSetup.textContent = '📁 Lier un dossier projet (MCP)';
+        }
+      } catch (e) { console.warn('Erreur loadMcpRoot:', e); }
     }
 
     async function setMcpRoot() {
@@ -5144,6 +5682,12 @@
       document.getElementById('mcp-root-display').textContent = '✓ Lié : ' + mcpRoot;
       renderMcpTree('.');
       showToast('⊞ MCP lié à ' + mcpRoot, 'success');
+
+      // Assurer que les boutons sont débloqués/visibles maintenant
+      const btnMcp = document.getElementById('btn-mcp');
+      const btnGit = document.getElementById('btn-git-open');
+      if (btnMcp) btnMcp.style.display = '';
+      if (btnGit) btnGit.style.display = '';
       AGENT_TOOLS.read_file = {
         desc: 'Lire un fichier du projet', icon: '📄',
         async run(path) { const r = await fetch('/api/mcp/read?path=' + encodeURIComponent(path)).then(x => x.json()); return r.error || r.content; }
@@ -6314,6 +6858,65 @@
     // ═══════════════════════════════════════
     //  GIT LOGIC
     // ═══════════════════════════════════════
+    function switchGitTab(tab) {
+      const s = document.getElementById('git-tab-status');
+      const h = document.getElementById('git-tab-history');
+      if (s && h) {
+        s.classList.toggle('active', tab === 'status');
+        h.classList.toggle('active', tab === 'history');
+        document.getElementById('git-panel-status').style.display = tab === 'status' ? 'block' : 'none';
+        document.getElementById('git-panel-history').style.display = tab === 'history' ? 'block' : 'none';
+        if (tab === 'history') refreshGitHistory();
+      }
+    }
+
+    async function refreshGitHistory() {
+      const list = document.getElementById('git-history-list');
+      if (!list) return;
+      list.innerHTML = '<div style="padding:20px;text-align:center" class="white-faint">Chargement...</div>';
+      try {
+        const r = await fetch('/api/git/history');
+        const d = await r.json();
+        if (!d.ok) { list.innerHTML = `<div class="white-faint" style="padding:10px">${d.error || 'Erreur inconnue'}</div>`; return; }
+        list.innerHTML = '';
+        if (d.commits.length === 0) {
+          list.innerHTML = '<div class="white-faint" style="padding:10px">Aucun commit trouvé.</div>';
+          return;
+        }
+        d.commits.forEach(c => {
+          const div = document.createElement('div');
+          div.className = 'git-item';
+          div.style.cursor = 'pointer';
+          div.style.flexDirection = 'column';
+          div.style.alignItems = 'flex-start';
+          div.innerHTML = `
+            <div style="display:flex; justify-content:space-between; width:100%; margin-bottom:4px">
+              <span style="color:var(--gold); font-family:var(--font-mono); font-size:10px">${c.hash}</span>
+              <span class="white-faint" style="font-size:10px">${c.date}</span>
+            </div>
+            <div style="font-size:12px; font-weight:500">${escapeHtml(c.message)}</div>
+            <div class="white-faint" style="font-size:10px; margin-top:2px">Par ${c.author}</div>
+          `;
+          div.onclick = () => showCommitDiff(c.hash);
+          list.appendChild(div);
+        });
+      } catch (e) { list.innerHTML = `<div class="error" style="padding:10px">Erreur : ${e.message}</div>`; }
+    }
+
+    async function showCommitDiff(hash) {
+      const container = document.getElementById('git-history-diff');
+      if (!container) return;
+      container.style.display = 'block';
+      container.innerHTML = '<div style="padding:10px" class="white-faint">Chargement du diff...</div>';
+      try {
+        const r = await fetch('/api/git/show?commit_hash=' + hash);
+        const d = await r.json();
+        if (d.error) { container.textContent = d.error; return; }
+        container.innerHTML = `<pre style="font-size:11px; color:var(--white-dim); white-space:pre-wrap; word-break:break-all">${escapeHtml(d.diff)}</pre>`;
+        container.scrollTo(0, 0);
+      } catch (e) { container.textContent = 'Erreur: ' + e.message; }
+    }
+
     function openGitOverlay() {
       document.getElementById('git-overlay').classList.add('open');
       refreshGitStatus();
@@ -6383,7 +6986,25 @@
         const r = await fetch('/api/git/diff');
         const d = await r.json();
         view.style.display = 'block';
-        view.innerHTML = d.stdout || 'Pas de diff.';
+        
+        if (d.error) {
+          view.innerHTML = `<div style="color:var(--gold);padding:10px">⚠️ ${d.error}</div>`;
+          return;
+        }
+
+        const raw = d.stdout || '';
+        if (!raw.trim()) {
+          view.innerHTML = '<div class="white-faint" style="padding:10px">Aucune modification détectée (Working tree clean).</div>';
+        } else {
+          const lines = raw.split('\n').map(line => {
+            const escaped = line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            if (line.startsWith('+') && !line.startsWith('+++')) return `<div class="diff-add">${escaped}</div>`;
+            if (line.startsWith('-') && !line.startsWith('---')) return `<div class="diff-sub">${escaped}</div>`;
+            if (line.startsWith('@@')) return `<div style="color:var(--gold);opacity:0.6">${escaped}</div>`;
+            return `<div>${escaped}</div>`;
+          });
+          view.innerHTML = lines.join('');
+        }
         btn.textContent = 'Cacher Diff';
       }
     }
@@ -6536,7 +7157,7 @@
         document.getElementById('stat-received').textContent = (d.tokens_received || 0).toLocaleString();
         document.getElementById('stat-saved').textContent = ((d.tokens_saved_trimmer || 0) + (d.tokens_cached || 0)).toLocaleString();
         document.getElementById('stat-eur').textContent = (d.estimated_eur_saved || 0).toFixed(2) + ' €';
-        
+
         // Charger aussi le solde via la fonction unifiée
         checkBalance();
       } catch (e) { console.error(e); }
@@ -6546,6 +7167,242 @@
       if (!confirm('Voulez-vous vraiment réinitialiser les statistiques ?')) return;
       await fetch('/api/stats/reset', { method: 'POST' });
       openEconomyOverlay();
+    }
+
+    // ═══════════════════════════════════════
+    //  ⚔️ BATTLE MODE
+    // ═══════════════════════════════════════
+    let battleOpen = false;
+    let battleRunning = false;
+
+    // Scores persistants par session
+    let battleScores = JSON.parse(localStorage.getItem('battle_scores') || '{"left":0,"right":0,"tie":0}');
+
+    function toggleBattle() {
+      const overlay = document.getElementById('battle-overlay');
+      battleOpen = !battleOpen;
+      overlay.classList.toggle('open', battleOpen);
+      const btn = document.getElementById('btn-battle');
+      if (btn) btn.classList.toggle('active', battleOpen);
+      if (battleOpen) {
+        populateBattleSelects();
+        setTimeout(() => document.getElementById('battle-input')?.focus(), 350);
+      }
+    }
+
+    function populateBattleSelects() {
+      // On fetch directement l'API pour éviter les bugs de lecture dans le DOM
+      fetch('/api/models')
+        .then(r => r.json())
+        .then(d => {
+          if (d.models) fillSelectWithModels(d.models);
+        })
+        .catch(err => console.error("Erreur fetch models battle:", err));
+    }
+
+    function fillSelectWithModels(models) {
+      const selL = document.getElementById('battle-model-left');
+      const selR = document.getElementById('battle-model-right');
+      if (!selL || !selR) return;
+
+      // Modèles suggerés par défaut
+      const defaultLeft = 'openai/gpt-4o';
+      const defaultRight = 'anthropic/claude-3.5-sonnet';
+
+      [selL, selR].forEach((sel, idx) => {
+        const prevVal = sel.value;
+        sel.innerHTML = '';
+        models.forEach(m => {
+          const opt = document.createElement('option');
+          opt.value = m;
+          // On garde le nom complet mais on enlève les préfixes techniques si besoin pour la lisibilité
+          const shortName = m.split('/').pop().replace(/:free$/, '');
+          opt.textContent = shortName;
+          sel.appendChild(opt);
+        });
+
+        // On essaie de restaurer ou mettre un défaut intelligent
+        const def = idx === 0 ? defaultLeft : defaultRight;
+        if (prevVal && models.includes(prevVal)) {
+          sel.value = prevVal;
+        } else if (models.includes(def)) {
+          sel.value = def;
+        } else {
+          sel.value = models[0] || '';
+        }
+      });
+    }
+
+    function handleBattleKey(e) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendBattleMessage();
+      }
+    }
+
+    async function sendBattleMessage() {
+      if (battleRunning) return;
+      const input = document.getElementById('battle-input');
+      const text = (input?.value || '').trim();
+      if (!text) return;
+
+      const modelLeft = document.getElementById('battle-model-left')?.value;
+      const modelRight = document.getElementById('battle-model-right')?.value;
+      if (!modelLeft || !modelRight) return showToast('Sélectionnez deux modèles', 'error');
+
+      // UI : reset + loading
+      battleRunning = true;
+      const sendBtn = document.getElementById('battle-send-btn');
+      if (sendBtn) sendBtn.disabled = true;
+
+      const bodyL = document.getElementById('battle-body-left');
+      const bodyR = document.getElementById('battle-body-right');
+      const thinkL = document.getElementById('battle-think-left');
+      const thinkR = document.getElementById('battle-think-right');
+      const voteEl = document.getElementById('battle-vote');
+
+      if (bodyL) bodyL.innerHTML = '';
+      if (bodyR) bodyR.innerHTML = '';
+      if (thinkL) { thinkL.style.display = 'flex'; bodyL.appendChild(thinkL); }
+      if (thinkR) { thinkR.style.display = 'flex'; bodyR.appendChild(thinkR); }
+      if (voteEl) voteEl.classList.remove('visible');
+
+      // Update model name badges
+      document.getElementById('battle-name-left').textContent = modelLeft.split('/').pop();
+      document.getElementById('battle-name-right').textContent = modelRight.split('/').pop();
+      document.getElementById('battle-tokens-left').textContent = '';
+      document.getElementById('battle-tokens-right').textContent = '';
+
+      // Vider le vote
+      ['vote-left', 'vote-tie', 'vote-right'].forEach(id => {
+        const b = document.getElementById(id);
+        if (b) b.classList.remove('selected');
+      });
+
+      input.value = '';
+      input.style.height = 'auto';
+
+      // Accumulateurs Markdown
+      let rawLeft = '', rawRight = '';
+      let doneLeft = false, doneRight = false;
+
+      const battleMessages = [...messages, { role: 'user', content: text }];
+
+      try {
+        const resp = await fetch('/api/battle', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model_left: modelLeft,
+            model_right: modelRight,
+            messages: battleMessages,
+            temperature: parseFloat(document.getElementById('temperature')?.value || 0.7),
+            max_tokens: parseInt(document.getElementById('max-tokens')?.value || 2048),
+          })
+        });
+
+        if (!resp.ok) { showToast('Erreur HTTP ' + resp.status, 'error'); return; }
+
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          const lines = buf.split('\n'); buf = lines.pop();
+
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            try {
+              const d = JSON.parse(line.slice(6));
+              if (d.battle_done) break;
+
+              const side = d.side;
+              const body = side === 'left' ? bodyL : bodyR;
+              const think = side === 'left' ? thinkL : thinkR;
+
+              if (d.delta) {
+                // Masquer le thinking dès le 1er delta
+                if (think && think.parentNode) think.style.display = 'none';
+
+                if (side === 'left') rawLeft += d.delta;
+                else rawRight += d.delta;
+
+                // Re-render Markdown courant
+                const html = renderMarkdown(side === 'left' ? rawLeft : rawRight);
+                body.innerHTML = html + '<span class="cursor"></span>';
+                body.scrollTop = body.scrollHeight;
+              }
+
+              if (d.done) {
+                const body2 = side === 'left' ? bodyL : bodyR;
+                const raw = side === 'left' ? rawLeft : rawRight;
+                body2.innerHTML = renderMarkdown(raw);
+                wrapCodeBlocks(body2);
+                body2.scrollTop = 0;
+
+                const tokEl = document.getElementById(side === 'left' ? 'battle-tokens-left' : 'battle-tokens-right');
+                if (tokEl && d.tokens) tokEl.textContent = d.tokens + ' tok';
+
+                if (side === 'left') doneLeft = true;
+                else doneRight = true;
+
+                // Afficher les boutons de vote quand les deux ont répondu
+                if (doneLeft && doneRight) {
+                  if (voteEl) voteEl.classList.add('visible');
+                  updateBattleScoreboard();
+                }
+              }
+            } catch (e2) { /* ignore parse errors */ }
+          }
+        }
+      } catch (e) {
+        showToast('Erreur battle : ' + e.message, 'error');
+      } finally {
+        battleRunning = false;
+        if (sendBtn) sendBtn.disabled = false;
+        if (thinkL) thinkL.style.display = 'none';
+        if (thinkR) thinkR.style.display = 'none';
+        // Afficher vote si pas encore fait
+        if (doneLeft || doneRight) {
+          if (voteEl) voteEl.classList.add('visible');
+          updateBattleScoreboard();
+        }
+      }
+    }
+
+    function voteBattle(winner) {
+      if (!['left', 'right', 'tie'].includes(winner)) return;
+      battleScores[winner] = (battleScores[winner] || 0) + 1;
+      localStorage.setItem('battle_scores', JSON.stringify(battleScores));
+
+      // Feedback visuel
+      ['vote-left', 'vote-tie', 'vote-right'].forEach(id => {
+        const b = document.getElementById(id);
+        if (b) b.classList.remove('selected');
+      });
+      const map = { left: 'vote-left', right: 'vote-right', tie: 'vote-tie' };
+      const btn = document.getElementById(map[winner]);
+      if (btn) btn.classList.add('selected');
+
+      const labels = { left: '👈 A gagne !', right: '👉 B gagne !', tie: '🤝 Égalité !' };
+      showToast(labels[winner] || '✓', 'success');
+      updateBattleScoreboard();
+    }
+
+    function updateBattleScoreboard() {
+      const el = document.getElementById('battle-scoreboard');
+      if (!el) return;
+      const l = battleScores.left || 0;
+      const r = battleScores.right || 0;
+      const t = battleScores.tie || 0;
+      el.innerHTML = `
+        <div class="battle-score-item"><div class="battle-score-dot left"></div> A : ${l} win${l !== 1 ? 's' : ''}</div>
+        <div class="battle-score-item"><div class="battle-score-dot right"></div> B : ${r} win${r !== 1 ? 's' : ''}</div>
+        <div class="battle-score-item" style="color:var(--white-faint)">🤝 ${t}</div>
+      `;
     }
 
     setTheme(savedTheme);
