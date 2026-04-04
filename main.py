@@ -1107,6 +1107,25 @@ async def search_endpoint(q: str = ""):
     return {"results": results, "query": q}
 
 # ─────────────────────────────────────────────
+#  LOCAL RULES LOADER (.ai-rules, .clauderules)
+# ─────────────────────────────────────────────
+def get_local_rules() -> str:
+    """Lit les règles spécifiques au projet si MCP_ROOT est défini."""
+    if not MCP_ROOT: return ""
+    import pathlib
+    rules_text = ""
+    for rf in [".clauderules", ".cursorrules", ".ai-rules"]:
+        try:
+            p = pathlib.Path(MCP_ROOT) / rf
+            if p.exists():
+                content = p.read_text(encoding="utf-8", errors="replace").strip()
+                if content:
+                    rules_text += f"\n\n🚨 RÈGLES DE DÉVELOPPEMENT SPÉCIFIQUES POUR CE PROJET ({rf}) :\n{content}"
+        except: pass
+    return rules_text
+
+
+# ─────────────────────────────────────────────
 #  DEVELOPER TOOLS LOGIC (Aider-style & Git)
 # ─────────────────────────────────────────────
 def validate_code_syntax(file_path: pathlib.Path) -> str | None:
@@ -2398,6 +2417,8 @@ async def agent_endpoint(req: Request):
     date_info    = get_current_date_info()
     memory_items = load_memory()
     full_system  = f"{date_info}\n\n{system_prompt.strip()}"
+    full_system += get_local_rules()
+
     if memory_items:
         mem_text = "\n".join(f"- {m['text']}" for m in memory_items if m.get("text","").strip())
         if mem_text:
@@ -2975,6 +2996,8 @@ async def chat(req: Request):
     date_info    = get_current_date_info()
     memory_items = load_memory()
     full_system  = f"{date_info}\n\n{system_prompt.strip()}"
+    full_system += get_local_rules()
+
     # Force formatting for normal chat too
     full_system += "\n\nIMPORTANT: Tout code ou fragment technique (React, JS, etc.) doit être impérativement entouré de blocs de code Markdown avec le langage spécifié (ex: ```jsx ... ```)."
     

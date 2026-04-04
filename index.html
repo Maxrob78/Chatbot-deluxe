@@ -2847,7 +2847,6 @@
       background: var(--bg-void);
       max-height: 300px;
       overflow-y: auto;
-      padding-bottom: 6px;
       border-bottom-left-radius: 16px;
       border-bottom-right-radius: 16px;
     }
@@ -6986,7 +6985,7 @@
         const r = await fetch('/api/git/diff');
         const d = await r.json();
         view.style.display = 'block';
-        
+
         if (d.error) {
           view.innerHTML = `<div style="color:var(--gold);padding:10px">⚠️ ${d.error}</div>`;
           return;
